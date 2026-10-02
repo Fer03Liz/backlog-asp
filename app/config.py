@@ -31,7 +31,8 @@ DEFAULT_SETTINGS = {
     "despachado_grace_days": "3",      # días hábiles tras la ETA antes de avisar que sigue en el reporte
     "kam_alert_days": "2",             # días esperando a la KAM antes de alertar
     "oh_max_days": "1",                # días hábiles máximos de un OH sin despachar
-    "currency": "USD",
+    "email_transit_days": "0",         # 0 = en el correo solo llevan fecha los repuestos en bodega
+    "currency": "COP",
     "email_signature": "Equipo de Planeación ASP\nIngram Micro",
 }
 

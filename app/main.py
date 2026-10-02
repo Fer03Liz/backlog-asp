@@ -3,6 +3,7 @@ import csv
 import hmac
 import io
 import json
+import zipfile
 from datetime import date
 from email.message import EmailMessage
 
@@ -358,46 +359,69 @@ def _signature(conn, user):
     return f"{user['full_name']}\n{sig}" if user.get("full_name") else sig
 
 
-@app.get("/api/emails")
-def emails(fecha: str | None = None, modo: str = "gestionados", user=Depends(current_user), conn=Depends(get_db)):
-    ctx = logic.Context(conn)
-    day = date.fromisoformat(_date_or_none(fecha, "fecha") or ctx.today.isoformat())
-    if modo not in ("gestionados", "todos"):
-        raise HTTPException(422, "Modo no válido.")
-    return {"fecha": day.isoformat(), "modo": modo, "grupos": logic.email_groups(conn, ctx, day, modo, _signature(conn, user))}
-
-
-class EmailIn(BaseModel):
-    fecha: str | None = None
-    modo: str = "gestionados"
-    formato: str = "texto"   # texto | eml
-
-
-@app.post("/api/emails/{ship_to}")
-def email_register(ship_to: str, body: EmailIn, user=Depends(EDITORS), conn=Depends(get_db)):
-    ctx = logic.Context(conn)
-    day = date.fromisoformat(_date_or_none(body.fecha, "fecha") or ctx.today.isoformat())
-    group = next((g for g in logic.email_groups(conn, ctx, day, body.modo, _signature(conn, user)) if g["ship_to"] == ship_to), None)
-    if not group:
-        raise HTTPException(404, "No hay casos para esa tienda.")
-    for key, f in group["fechas"].items():
-        conn.execute("UPDATE cases SET fecha_comunicada=? WHERE key_notif=?", (f, key))
-    conn.execute("INSERT INTO emails_log(at, user_id, ship_to, n_cases, keys) VALUES(?,?,?,?,?)",
-                 (db.now_iso(), user["id"], ship_to, len(group["casos"]), json.dumps(group["casos"])))
-    db.audit(conn, user, "email", ship_to, {"casos": len(group["casos"]), "formato": body.formato})
-    conn.commit()
-    if body.formato != "eml":
-        return {"ok": True, "subject": group["subject"], "body": group["body"]}
+def _eml(group) -> bytes:
     msg = EmailMessage()
     if group["email"]:
         msg["To"] = group["email"]
     msg["Subject"] = group["subject"]
     msg["X-Unsent"] = "1"   # Outlook lo abre como borrador listo para enviar
     msg.set_content(group["body"])
-    safe = "".join(ch for ch in group["tienda"] if ch.isalnum() or ch in " -_").strip().replace(" ", "_")[:60]
-    return Response(bytes(msg), media_type="message/rfc822",
-                    headers={"Content-Disposition": f'attachment; filename="correo_{safe or ship_to}.eml"'})
+    return bytes(msg)
 
+
+def _eml_name(group) -> str:
+    safe = "".join(ch for ch in group["tienda"] if ch.isalnum() or ch in " -_").strip().replace(" ", "_")[:60]
+    return f"correo_{safe or group['ship_to']}.eml"
+
+
+def _register_email(conn, user, group, formato):
+    """Guarda la fecha comunicada (solo de los casos con fecha) y deja el envío en la bitácora."""
+    for key, f in group["fechas"].items():
+        conn.execute("UPDATE cases SET fecha_comunicada=? WHERE key_notif=?", (f, key))
+    conn.execute("INSERT INTO emails_log(at, user_id, ship_to, n_cases, keys) VALUES(?,?,?,?,?)",
+                 (db.now_iso(), user["id"], group["ship_to"], len(group["casos"]), json.dumps(group["casos"])))
+    db.audit(conn, user, "email", group["ship_to"], {"casos": len(group["casos"]), "formato": formato})
+
+
+@app.get("/api/emails")
+def emails(user=Depends(current_user), conn=Depends(get_db)):
+    ctx = logic.Context(conn)
+    return {"fecha": ctx.today.isoformat(), "grupos": logic.email_groups(conn, ctx, _signature(conn, user))}
+
+
+class EmailIn(BaseModel):
+    formato: str = "texto"   # texto | eml
+
+
+@app.post("/api/emails/{ship_to}")
+def email_register(ship_to: str, body: EmailIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    ctx = logic.Context(conn)
+    group = next((g for g in logic.email_groups(conn, ctx, _signature(conn, user)) if g["ship_to"] == ship_to), None)
+    if not group:
+        raise HTTPException(404, "No hay casos para esa tienda.")
+    _register_email(conn, user, group, body.formato)
+    conn.commit()
+    if body.formato != "eml":
+        return {"ok": True}
+    return Response(_eml(group), media_type="message/rfc822",
+                    headers={"Content-Disposition": f'attachment; filename="{_eml_name(group)}"'})
+
+
+@app.post("/api/emails-lote")
+def email_batch(user=Depends(EDITORS), conn=Depends(get_db)):
+    """Todos los correos del día en un .zip (solo tiendas con correo registrado)."""
+    ctx = logic.Context(conn)
+    groups = [g for g in logic.email_groups(conn, ctx, _signature(conn, user)) if g["email"]]
+    if not groups:
+        raise HTTPException(404, "Ninguna tienda con casos tiene correo registrado.")
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for g in groups:
+            zf.writestr(_eml_name(g), _eml(g))
+            _register_email(conn, user, g, "lote")
+    conn.commit()
+    return Response(buf.getvalue(), media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="correos_{ctx.today.isoformat()}.zip"'})
 
 class ShipToIn(BaseModel):
     email: str | None = Field(None, max_length=320)
@@ -585,7 +609,7 @@ class SettingsIn(BaseModel):
 
 @app.put("/api/settings")
 def put_settings(body: SettingsIn, user=Depends(ADMINS), conn=Depends(get_db)):
-    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days"}
+    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days", "email_transit_days"}
     for k, v in body.settings.items():
         if k not in config.DEFAULT_SETTINGS:
             raise HTTPException(422, f"Parámetro desconocido: {k}")

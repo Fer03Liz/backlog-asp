@@ -471,32 +471,31 @@ function pintarFilasGuias(guias, cuerpo, resumen) {
 // ------------------------------------------------------------------ correos
 async function pintarCorreos() {
   const v = vaciar($('#v-correos'));
-  const dia = h('input', { type: 'date', value: S.correoFecha || hoyISO() });
-  const modo = h('select', {}, h('option', { value: 'gestionados', selected: S.correoModo !== 'todos' }, 'Casos gestionados ese día'),
-    h('option', { value: 'todos', selected: S.correoModo === 'todos' }, 'Todos los casos pendientes'));
-  const lista = h('div');
-  const refrescar = intentar(async () => {
-    S.correoFecha = dia.value; S.correoModo = modo.value;
-    const r = await api('GET', `/api/emails?fecha=${dia.value}&modo=${modo.value}`);
-    vaciar(lista);
-    if (!r.grupos.length) { lista.append(h('div', { class: 'vacio' }, 'No hay casos gestionados ese día. Cambie a "Todos los casos pendientes" para armar un correo completo.')); return; }
-    const nCasos = r.grupos.reduce((s, g) => s + g.casos.length, 0);
-    lista.append(h('p', { class: 'resumen' }, h('b', {}, r.grupos.length), r.grupos.length === 1 ? ' tienda, ' : ' tiendas, ', h('b', {}, nCasos), nCasos === 1 ? ' caso.' : ' casos.'));
-    for (const g of r.grupos) lista.append(tarjetaCorreo(g, r));
-  });
-  v.append(h('div', { class: 'panel' }, h('h2', {}, 'Correos por tienda'),
-    h('p', {}, 'Un correo por tienda, solo con tiempos: notificación, PO de la tienda y fecha estimada de despacho. Copie el texto o descargue el borrador (.eml se abre en Outlook listo para enviar). Al hacerlo, la app guarda la fecha comunicada.'),
-    h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Día', dia), h('label', { class: 'campo' }, 'Incluir', modo),
-      h('button', { class: 'btn', type: 'button', onclick: refrescar }, 'Armar correos'))));
-  v.append(lista);
-  refrescar();
+  const r = await api('GET', '/api/emails');
+  const conCorreo = r.grupos.filter((g) => g.email).length;
+  v.append(h('div', { class: 'panel' }, h('h2', {}, 'Correo diario por tienda'),
+    h('p', {}, 'Un correo por tienda con tres bloques: por despachar (con fecha, solo repuestos ya en bodega), en gestión (sin fecha, para no comprometer ninguna) y despachados desde el último correo. Al copiar o descargar, la app guarda la fecha comunicada.'),
+    h('div', { class: 'barra' },
+      h('p', { class: 'resumen' }, h('b', {}, r.grupos.length), ' tiendas, ', h('b', {}, conCorreo), ' con correo registrado.'),
+      h('span', { class: 'separa' }),
+      puedeEditar() && conCorreo ? h('button', {
+        class: 'btn', type: 'button', onclick: intentar(async () => {
+          const resp = await api('POST', '/api/emails-lote', undefined, true);
+          descargar(await resp.blob(), `correos_${r.fecha}.zip`);
+          aviso(`Se descargaron ${conCorreo} borradores. Descomprima y ábralos con Outlook para enviarlos.`);
+        }),
+      }, 'Descargar todos (.zip)') : null)));
+  if (!r.grupos.length) { v.append(h('div', { class: 'vacio' }, 'No hay casos pendientes ni despachos recientes.')); return; }
+  r.grupos.forEach((g) => v.append(tarjetaCorreo(g)));
 }
 
-function tarjetaCorreo(g, r) {
+function tarjetaCorreo(g) {
   const correo = h('input', { class: 'solo', type: 'email', value: g.email || '', placeholder: 'correo@tienda.com', size: 30 });
-  const registrar = async (formato) => api('POST', `/api/emails/${encodeURIComponent(g.ship_to)}`, { fecha: r.fecha, modo: r.modo, formato }, formato === 'eml');
+  const registrar = (formato) => api('POST', `/api/emails/${encodeURIComponent(g.ship_to)}`, { formato }, formato === 'eml');
+  const n = g.conteo;
   return h('article', { class: 'correo' },
-    h('header', {}, h('h3', {}, g.tienda), h('span', { class: 'sub' }, `Ship-to ${g.ship_to}, ${g.casos.length} ${g.casos.length === 1 ? 'caso' : 'casos'}`),
+    h('header', {}, h('h3', {}, g.tienda),
+      h('span', { class: 'sub' }, `Ship-to ${g.ship_to}: ${n.fecha} por despachar, ${n.gestion} en gestión, ${n.despachados} despachados`),
       h('span', { class: 'separa' }),
       g.email ? null : h('span', { class: 'sin-correo' }, 'Sin correo registrado'),
       puedeEditar() ? [correo, h('button', {
@@ -673,7 +672,8 @@ async function pintarAdmin() {
     kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia de fill rate (días después de la ETA)',
     fr_tolerance_business: 'Tolerancia en días hábiles (1) o calendario (0)', exchange_codes: 'Garantías con precio exchange (separadas por coma)',
     despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera del Apple Care Manager antes de alertar',
-    oh_max_days: 'Días hábiles máximos de un OH sin despachar', currency: 'Moneda de los precios', email_signature: 'Firma de los correos',
+    oh_max_days: 'Días hábiles máximos de un OH sin despachar',
+    email_transit_days: 'Correo: días hábiles de tránsito confirmado que también llevan fecha (0 = solo repuestos en bodega)', currency: 'Moneda de los precios', email_signature: 'Firma de los correos',
   };
   const inputs = {};
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Parámetros'),

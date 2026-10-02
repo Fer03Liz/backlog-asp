@@ -107,6 +107,13 @@ class Calendar:
     def first_business_from(self, x: date) -> date:
         return x if self.is_business(x) else self.next_business_after(x)
 
+    
+    def prev_business_before(self, x: date) -> date:
+        y = x - timedelta(days=1)
+        while not self.is_business(y):
+            y -= timedelta(days=1)
+        return y
+
     def business_days_between(self, a: date, b: date) -> int:
         """Días hábiles en el intervalo (a, b]."""
         if not a or not b or b <= a:
@@ -465,38 +472,52 @@ def kpis(conn, ctx: Context) -> dict:
 
 
 # ---------------------------------------------------------------- correos
-def email_groups(conn, ctx: Context, fecha: date, modo: str, signature: str) -> list:
-    """Correos por tienda con solo tiempos: notificación, PO y fecha."""
-    cases = [c for c in load_cases(conn, ctx) if c["pendiente"] or
-             (c["fecha_despacho"] and d(c["fecha_despacho"]) >= fecha - timedelta(days=1))]
-    if modo == "gestionados":
-        day = iso(fecha)
-        touched = {r["target"] for r in conn.execute(
-            "SELECT DISTINCT target FROM audit_log WHERE action IN ('case_update','comment') AND substr(at,1,10)=?", (day,))}
-        cases = [c for c in cases if c["key_notif"] in touched]
-    groups = defaultdict(list)
-    for c in cases:
-        groups[c["ship_to"]].append(c)
+def email_groups(conn, ctx: Context, signature: str) -> list:
+    """Correo diario por tienda: por despachar (con fecha), en gestión (sin fecha) y despachados."""
+    t = ctx.today
+    transit_days = int(ctx.settings.get("email_transit_days", "0"))
+    last_sent = {r["ship_to"]: r["at"][:10] for r in conn.execute(
+        "SELECT ship_to, MAX(at) at FROM emails_log GROUP BY ship_to")}
+    default_since = iso(ctx.cal.prev_business_before(t))
+    horizon = ctx.cal.add_business_days(t, transit_days)
+
+    groups = defaultdict(lambda: {"fecha": [], "gestion": [], "despachados": []})
+    for c in load_cases(conn, ctx, include_closed=True, closed_days=10):
+        if c["fecha_despacho"]:
+            if c["fecha_despacho"] >= last_sent.get(c["ship_to"], default_since):
+                groups[c["ship_to"]]["despachados"].append(c)
+        elif c["pendiente"]:
+            en_bodega = c["llegada_fuente"] in ("Recibido", "En inventario")
+            transito = (transit_days > 0 and c["llegada_fuente"] == "KGB (guía)" and c["nivel"] != "rojo"
+                        and d(c["llegada"]) <= horizon)
+            groups[c["ship_to"]]["fecha" if en_bodega or transito else "gestion"].append(c)
+
+    def ref(c):
+        return f"Notificación {c['notifctn']}-{int(c['line_item'] or 0):02d} | PO {c.get('po_number') or '—'}"
+
     out = []
-    for ship_to, rows in sorted(groups.items(), key=lambda kv: (kv[1][0]["list_name"] or "")):
-        rows.sort(key=lambda c: (c["notifctn"] or "", c["line_item"] or 0))
-        store = rows[0]["list_name"] or ship_to
-        lines = []
-        for c in rows:
-            ref = f"Notificación {c['notifctn']}-{int(c['line_item'] or 0):02d}"
-            po = f"PO {c['po_number']}" if c.get("po_number") else "PO —"
-            if c["fecha_despacho"]:
-                when = f"Despachado el {fmt(d(c['fecha_despacho']))}"
-            else:
-                when = f"Fecha estimada de despacho: {fmt(d(c['fecha_cliente']))}"
-            lines.append(f"{ref} | {po} | {when}")
-        subject = f"Estado de sus casos pendientes – {store.strip()} – {fmt(fecha)}"
-        body = ("Buenos días,\n\nLes compartimos el estado de los casos pendientes de repuesto:\n\n"
-                + "\n".join(lines)
-                + "\n\nLas fechas corresponden al despacho desde nuestro centro de distribución. "
-                  "Si alguna cambia, se la informaremos.\n\nSaludos,\n" + signature)
+    for ship_to, g in groups.items():
+        for rows in g.values():
+            rows.sort(key=lambda c: (c["notifctn"] or "", c["line_item"] or 0))
+        todos = g["fecha"] + g["gestion"] + g["despachados"]
+        store = (todos[0]["list_name"] or ship_to).strip()
+        parts = [f"Buenos días,\n\nEste es el estado de sus casos de repuesto al {fmt(t)}:"]
+        if g["fecha"]:
+            parts.append("Por despachar\n" + "\n".join(
+                f"- {ref(c)} | Despacho estimado: {fmt(d(c['fecha_cliente']))}" for c in g["fecha"]))
+        if g["gestion"]:
+            parts.append("En gestión (le informaremos la fecha cuando tengamos el repuesto)\n" + "\n".join(
+                f"- {ref(c)}" for c in g["gestion"]))
+        if g["despachados"]:
+            parts.append("Despachados\n" + "\n".join(
+                f"- {ref(c)} | Despachado el {fmt(d(c['fecha_despacho']))}" for c in g["despachados"]))
+        parts.append("Saludos,\n" + signature)
         info = ctx.shipto.get(ship_to) or {}
-        out.append({"ship_to": ship_to, "tienda": store.strip(), "email": info.get("email"),
-                    "casos": [c["key_notif"] for c in rows], "fechas": {c["key_notif"]: c["fecha_cliente"] for c in rows},
-                    "subject": subject, "body": body})
+        out.append({"ship_to": ship_to, "tienda": store, "email": info.get("email"),
+                    "conteo": {k: len(v) for k, v in g.items()},
+                    "casos": [c["key_notif"] for c in todos],
+                    "fechas": {c["key_notif"]: c["fecha_cliente"] for c in g["fecha"]},
+                    "subject": f"Estado de sus casos de repuesto – {store} – {fmt(t)}",
+                    "body": "\n\n".join(parts)})
+    out.sort(key=lambda g: g["tienda"])
     return out
