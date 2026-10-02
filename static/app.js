@@ -537,6 +537,16 @@ async function pintarIndicadores() {
   v.append(h('p', { class: 'nota' }, `Fill rate: líneas cuyo límite (ETA + tolerancia) venció desde el ${fecha(fr.desde)}; a tiempo si la fecha de despacho registrada es igual o anterior al límite.`,
     fr.sin_registro ? ` ${fr.sin_registro} líneas salieron del reporte sin fecha de despacho y no se cuentan.` : ''));
 
+  const ti = k.tiendas;
+  v.append(h('div', { class: 'panel' }, h('h2', {}, 'Tiendas en backlog'),
+    h('p', {}, 'Tiendas (AASP) con al menos una línea por despachar. Los clientes se cuentan por la primera palabra del nombre de la tienda (ISHOP, MAC, WODEN…).'),
+    h('div', { class: 'tira' },
+      cifra(ti.con_backlog, 'tiendas con backlog'),
+      cifra(ti.clientes, 'clientes'),
+      cifra(ti.con_rojas, 'tiendas con líneas en rojo', ti.con_rojas ? 'alerta-cifra' : ''),
+      cifra(ti.top10_pct === null ? '—' : `${ti.top10_pct}%`, 'de las líneas está en las 10 tiendas con más casos'),
+      cifra(ti.entraron === null ? '—' : `+${ti.entraron} / −${ti.salieron}`, 'tiendas que entraron / salieron en la última carga'))));    
+
   const barras = (filas, max) => h('div', { class: 'barras' }, filas.flatMap(([label, n, roja]) => {
     const b = h('div', { class: `barra-v${roja ? ' roja' : ''}` }); b.style.width = `${max ? (n / max) * 100 : 0}%`;
     return [h('span', {}, label), h('div', {}, b), h('span', { class: 'num' }, n)];
@@ -548,10 +558,10 @@ async function pintarIndicadores() {
     h('div', { class: 'panel' }, h('h2', {}, 'Flujo diario'),
       h('p', {}, 'Casos que entran y salen del reporte en cada carga. Si salen más de los que entran, el backlog baja.'),
       flujo.length ? h('table', { class: 'mini' },
-        h('thead', {}, h('tr', {}, ['Archivo', 'Nuevas', 'Salieron', 'Neto', 'Abiertas'].map((t) => h('th', {}, t)))),
+        h('thead', {}, h('tr', {}, ['Archivo', 'Nuevas', 'Salieron', 'Neto', 'Abiertas', 'Tiendas'].map((t) => h('th', {}, t)))),
         h('tbody', {}, flujo.map((f) => h('tr', {}, h('td', {}, fecha(f.fecha)), h('td', { class: 'num' }, f.nuevas),
           h('td', { class: 'num' }, f.salieron), h('td', { class: `num${f.neto > 0 ? ' dias-neg' : ''}` }, f.neto > 0 ? `+${f.neto}` : f.neto),
-          h('td', { class: 'num' }, f.abiertas))))) : h('p', { class: 'nota' }, 'Se llena a partir de la segunda carga.'),
+          h('td', { class: 'num' }, f.abiertas), h('td', { class: 'num' }, f.tiendas))))) : h('p', { class: 'nota' }, 'Se llena a partir de la segunda carga.'),
       flujo.length > 1 ? barras(flujo.slice(-7).map((f) => [`${fecha(f.fecha)} salieron`, f.salieron]), maxFlujo) : null),
     h('div', { class: 'panel' }, h('h2', {}, 'Edad de lo pendiente'),
       h('p', {}, 'Días desde la creación del caso.'),

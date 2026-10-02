@@ -165,7 +165,7 @@ textarea { width: 100%; min-height: 70px; border: 1px solid var(--linea); border
 .mini thead th { position: static; }
 
 /* ---------- listas generales */
-.panel { background: var(--superficie); border: 1px solid var(--linea); border-radius: var(--radio); padding: 16px; margin-bottom: 16px; }
+.panel { background: var(--superficie); border: 1px solid var(--linea); border-radius: var(--radio); padding: 16px; margin-bottom: 16px; overflow-x: auto; }
 .panel h2 { font: 600 17px var(--display); margin: 0 0 4px; }
 .panel > p { margin: 0 0 12px; color: var(--grafito); font-size: 13px; max-width: 75ch; }
 .rejilla { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }

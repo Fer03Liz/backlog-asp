@@ -373,11 +373,17 @@ def kpis(conn, ctx: Context) -> dict:
     at_risk = [c for c in upcoming if c["nivel"] == "rojo"]
 
     # Flujo diario desde las cargas del backlog
+    tiendas_por_carga = {}
+    for r in conn.execute("""SELECT s.file_date, c.ship_to FROM snapshots s
+                             JOIN cases c ON c.key_notif = s.key_notif"""):
+        tiendas_por_carga.setdefault(r["file_date"], set()).add(r["ship_to"])
+        
     flujo = []
     for r in conn.execute("SELECT file_date, summary FROM loads WHERE kind='backlog' ORDER BY file_date DESC, id DESC LIMIT 15"):
         s = json.loads(r["summary"] or "{}")
         flujo.append({"fecha": r["file_date"], "nuevas": s.get("nuevas", 0), "salieron": s.get("cerradas", 0),
-                      "neto": s.get("nuevas", 0) - s.get("cerradas", 0), "abiertas": s.get("abiertas", 0)})
+                      "neto": s.get("nuevas", 0) - s.get("cerradas", 0), "abiertas": s.get("abiertas", 0),
+                      "tiendas": len(tiendas_por_carga.get(r["file_date"], ()))})
     flujo.reverse()
 
     buckets = {"0-7": 0, "8-15": 0, "16-30": 0, "31+": 0}
@@ -399,6 +405,25 @@ def kpis(conn, ctx: Context) -> dict:
     por_opcion = [{"opcion": k, "abiertas": v["abiertas"], "despachadas": v["despachadas"],
                    "ciclo_prom": round(sum(v["ciclo"]) / len(v["ciclo"]), 1) if v["ciclo"] else None}
                   for k, v in sorted(by_opt.items(), key=lambda kv: -kv[1]["abiertas"])]
+    # Tiendas (AASP = Ship-to) con líneas por despachar
+    por_tienda = defaultdict(lambda: {"lineas": 0, "rojas": 0})
+    for c in pend:
+        pt = por_tienda[c["ship_to"]]
+        pt["lineas"] += 1
+        pt["rojas"] += c["nivel"] == "rojo"
+    top10 = sum(sorted((v["lineas"] for v in por_tienda.values()), reverse=True)[:10])
+    clientes = {(c["list_name"] or "").split()[0] for c in pend if (c["list_name"] or "").split()}
+    fechas = sorted(tiendas_por_carga, reverse=True)[:2]
+    ultima = tiendas_por_carga[fechas[0]] if fechas else set()
+    previa = tiendas_por_carga[fechas[1]] if len(fechas) > 1 else None
+    tiendas = {
+        "con_backlog": len(por_tienda),
+        "clientes": len(clientes),
+        "con_rojas": sum(1 for v in por_tienda.values() if v["rojas"]),
+        "top10_pct": round(100 * top10 / len(pend), 1) if pend else None,
+        "entraron": len(ultima - previa) if previa is not None else None,
+        "salieron": len(previa - ultima) if previa is not None else None,
+    }
 
     oh = [c for c in pend if c["option_jenny"] == "OH"]
     kam = [c for c in pend if c["aprobacion_kam"] == "Pendiente"]
@@ -434,6 +459,7 @@ def kpis(conn, ctx: Context) -> dict:
                 "dias_prom": round(sum((t - d(c["kam_solicitado"])).days for c in kam if c["kam_solicitado"]) / len(kam), 1) if kam else None},
         "top_partes": top("assembly", "parte"),
         "top_tiendas": top("ship_to", "ship_to"),
+        "tiendas": tiendas,
         "alertas": {lvl: sum(1 for c in pend if c["nivel"] == lvl) for lvl in ("rojo", "ambar", "info", "ok")},
     }
 
