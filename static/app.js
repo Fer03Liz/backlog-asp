@@ -424,32 +424,48 @@ async function abrirDetalle(key) {
 async function pintarGuias() {
   const v = vaciar($('#v-guias'));
   const r = await api('GET', '/api/guides');
+  const buscar = h('input', {
+    type: 'search', value: S.guiaQ || '', placeholder: 'Guía, caso, parte o tienda',
+    oninput: (ev) => { S.guiaQ = ev.target.value; pintarFilasGuias(r.guias, cuerpo, resumen); },
+  });
+  const resumen = h('p', { class: 'resumen' });
+  const cuerpo = h('tbody');
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Guías de Apple'),
     h('p', {}, 'Cada guía agrupa los casos que viajan en el mismo envío. Cuando llegue, registre la llegada una sola vez y se marcan todos sus casos como recibidos. ',
-      `El cruce usa el número de guía de los comentarios de la KAM contra el KGB del ${r.kgb_fecha ? fecha(r.kgb_fecha) : '(sin cargar)'}.`)));
+      `El cruce usa el número de guía de los comentarios del Apple Care Manager contra el KGB del ${r.kgb_fecha ? fecha(r.kgb_fecha) : '(sin cargar)'}.`),
+    h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Buscar', buscar))));
+  v.append(resumen);
   if (!r.guias.length) { v.append(h('div', { class: 'vacio' }, 'No hay guías en los casos abiertos.')); return; }
-  const tabla = h('table', {},
+  v.append(h('div', { class: 'marco' }, h('table', {},
     h('thead', {}, h('tr', {}, ['Guía', 'Casos pendientes', 'Partes', 'Tiendas', 'En KGB', 'Llegada KGB', 'Evento KGB', 'ETA Apple más cercana', 'Retraso', 'Llegada registrada', ''].map((t) => h('th', {}, t)))),
-    h('tbody', {}, r.guias.map((g) => {
-      const f = h('input', { type: 'date', class: 'solo', value: hoyISO() });
-      return h('tr', {},
-        h('td', {}, h('button', { class: 'btn sec', type: 'button', title: 'Ver sus casos', onclick: () => { S.f.guia = g.guia; S.sel = null; mostrar('casos'); } }, g.guia)),
-        h('td', { class: 'num' }, `${g.pendientes} / ${g.casos}`, g.rojas ? h('span', { class: 'sub dias-neg' }, `${g.rojas} en rojo`) : null),
-        h('td', { class: 'num' }, g.partes), h('td', { class: 'num' }, g.tiendas),
-        h('td', {}, g.en_kgb ? h('span', { class: 'badge-si' }, `Sí (${g.kgb_lineas})`) : h('span', { class: 'badge-no' }, 'No')),
-        h('td', { class: 'fecha' }, fecha(g.kgb_edd)), h('td', {}, g.kgb_evento || '—'),
-        h('td', { class: 'fecha' }, fecha(g.eta_min)),
-        h('td', {}, g.retrasada ? h('span', { class: 'badge-no' }, 'Retrasada') : '—'),
-        h('td', { class: 'fecha' }, g.llegada ? fecha(g.llegada) : '—'),
-        h('td', {}, puedeEditar() && g.pendientes ? h('div', { class: 'acciones' }, f, h('button', {
-          class: 'btn', type: 'button', onclick: intentar(async () => {
-            const res = await api('POST', `/api/guides/${encodeURIComponent(g.guia)}/arrival`, { fecha: f.value });
-            aviso(`Llegada registrada: ${res.actualizados} de ${res.casos} casos actualizados.`);
-            await cargarCasos(); pintarGuias();
-          }),
-        }, 'Registrar llegada')) : null));
-    })));
-  v.append(h('div', { class: 'marco' }, tabla));
+    cuerpo)));
+  pintarFilasGuias(r.guias, cuerpo, resumen);
+}
+
+function pintarFilasGuias(guias, cuerpo, resumen) {
+  const q = (S.guiaQ || '').trim().toLowerCase();
+  const lista = q ? guias.filter((g) => g.buscar.includes(q)) : guias;
+  vaciar(resumen).append(h('b', {}, lista.length), ` de ${guias.length} guías`);
+  vaciar(cuerpo).append(...lista.map((g) => {
+    const f = h('input', { type: 'date', class: 'solo', value: hoyISO() });
+    return h('tr', {},
+      h('td', {}, h('button', { class: 'btn sec', type: 'button', title: 'Ver sus casos', onclick: () => { S.f.guia = g.guia; S.sel = null; mostrar('casos'); } }, g.guia)),
+      h('td', { class: 'num' }, `${g.pendientes} / ${g.casos}`, g.rojas ? h('span', { class: 'sub dias-neg' }, `${g.rojas} en rojo`) : null),
+      h('td', { class: 'num' }, g.partes), h('td', { class: 'num' }, g.tiendas),
+      h('td', {}, g.en_kgb ? h('span', { class: 'badge-si' }, `Sí (${g.kgb_lineas})`) : h('span', { class: 'badge-no' }, 'No')),
+      h('td', { class: 'fecha' }, fecha(g.kgb_edd)), h('td', {}, g.kgb_evento || '—'),
+      h('td', { class: 'fecha' }, fecha(g.eta_min)),
+      h('td', {}, g.retrasada ? h('span', { class: 'badge-no' }, 'Retrasada') : '—'),
+      h('td', { class: 'fecha' }, g.llegada ? fecha(g.llegada) : '—'),
+      h('td', {}, puedeEditar() && g.pendientes ? h('div', { class: 'acciones' }, f, h('button', {
+        class: 'btn', type: 'button', onclick: intentar(async () => {
+          const res = await api('POST', `/api/guides/${encodeURIComponent(g.guia)}/arrival`, { fecha: f.value });
+          aviso(`Llegada registrada: ${res.actualizados} de ${res.casos} casos actualizados.`);
+          await cargarCasos(); pintarGuias();
+        }),
+      }, 'Registrar llegada')) : null));
+  }));
+  if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: 11, class: 'vacio' }, 'Ninguna guía coincide con la búsqueda.')));
 }
 
 // ------------------------------------------------------------------ correos

@@ -292,8 +292,9 @@ def guides(user=Depends(current_user), conn=Depends(get_db)):
     for c in logic.load_cases(conn, ctx):
         for tk in c["tracking_list"]:
             g = agg.setdefault(tk, {"guia": tk, "casos": 0, "pendientes": 0, "partes": set(), "tiendas": set(),
-                                    "eta_min": None, "retrasada": False, "rojas": 0})
+                                    "claves": [], "eta_min": None, "retrasada": False, "rojas": 0})
             g["casos"] += 1
+            g["claves"].append(c["key_notif"])
             g["pendientes"] += c["pendiente"]
             g["partes"].add(c["assembly"])
             g["tiendas"].add(c["list_name"])
@@ -308,7 +309,8 @@ def guides(user=Depends(current_user), conn=Depends(get_db)):
         edds = sorted(r["edd"] for r in rows if r["edd"])
         g["retrasada"] |= any("out" in (r["sla_ind"] or "").lower() or (r["current_event"] or "").lower().startswith("shipment delay")
                               for r in rows)
-        out.append({**g, "partes": len(g["partes"]), "tiendas": len(g["tiendas"]), "en_kgb": bool(rows),
+        texto = " ".join([tk, *g["claves"], *g["partes"], *(x or "" for x in g["tiendas"])]).lower()
+        out.append({**g, "partes": len(g["partes"]), "tiendas": len(g["tiendas"]), "buscar": texto, "en_kgb": bool(rows),
                     "kgb_lineas": len(rows), "kgb_edd": edds[0] if edds else None,
                     "kgb_evento": next((r["current_event"] for r in rows if r["current_event"]), None),
                     "llegada": ctx.arrivals.get(tk)})
