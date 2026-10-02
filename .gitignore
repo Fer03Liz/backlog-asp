@@ -1,0 +1,12 @@
+# Datos confidenciales: nunca van al repositorio
+data/
+*.db
+*.db-wal
+*.db-shm
+*.xlsx
+*.xlsm
+*.csv
+*.eml
+.venv/
+__pycache__/
+*.pyc

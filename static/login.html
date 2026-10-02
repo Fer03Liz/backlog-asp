@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ingresar · Backlog ASP</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/login.js" defer></script>
+</head>
+<body>
+  <div class="login">
+    <form id="form-login" autocomplete="on">
+      <div>
+        <h1>Backlog ASP</h1>
+        <p>Seguimiento de casos pendientes de repuesto. Ingrese con su usuario.</p>
+      </div>
+      <label class="campo">Usuario
+        <input id="usuario" name="username" autocomplete="username" required maxlength="64" autofocus>
+      </label>
+      <label class="campo">Contraseña
+        <input id="clave" name="password" type="password" autocomplete="current-password" required maxlength="256">
+      </label>
+      <div class="error" id="error" role="alert"></div>
+      <button class="btn" type="submit">Ingresar</button>
+    </form>
+  </div>
+</body>
+</html>
