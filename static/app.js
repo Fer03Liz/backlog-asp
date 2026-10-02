@@ -159,7 +159,7 @@ const ALERTAS_NOMBRE = {
   FUERA_FR: 'Venció el plazo de fill rate', RIESGO_FR: 'Despacho después del límite', SIN_MARGEN: 'Sin margen en el plazo',
   OH_DEMORADO: 'OH demorado', ETA_NO_HABIL: 'ETA en día no hábil', GUIA_NO_KGB: 'Guía no aparece en KGB',
   GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada',
-  SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la KAM',
+  SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la ACM',
   DESPACHADO_SIGUE: 'Despachado y sigue en reporte', REABIERTO: 'Reabierto', SIN_GUIA: 'In Transit sin guía',
 };
 
@@ -310,7 +310,7 @@ const dato = (label, ...val) => [h('dt', {}, label), h('dd', {}, ...val)];
 const CAMPOS = {
   estado: 'Estado', responsable: 'Responsable', fecha_recepcion: 'Recepción', fecha_despacho: 'Despacho',
   fecha_objetivo: 'Fecha a comunicar', propuesta: 'Propuesta', aprobacion_kam: 'Aprobación KAM',
-  kam_solicitado: 'KAM solicitada', kam_respuesta: 'KAM respondida',
+  kam_solicitado: 'ACM solicitado', kam_respuesta: 'ACM respondió',
 };
 
 async function abrirDetalle(key) {
@@ -355,7 +355,7 @@ async function abrirDetalle(key) {
       campo('Estado', g.estado), campo('Responsable', g.responsable),
       campo('Fecha de recepción', g.fecha_recepcion), campo('Fecha de despacho', g.fecha_despacho),
       campo('Fecha a comunicar (opcional)', g.fecha_objetivo), campo('Cambio de solución propuesto', g.propuesta),
-      campo('Aprobación de la KAM', g.aprobacion_kam),
+      campo('Aprobación del Apple Care Manager', g.aprobacion_kam),
       c.kam_solicitado ? h('p', { class: 'nota ancho' }, `Solicitada ${fechaLarga(c.kam_solicitado)}${c.kam_respuesta ? `, respondida ${fechaLarga(c.kam_respuesta)}` : ''}.`) : null),
     editable ? h('div', { class: 'acciones' }, h('button', {
       class: 'btn', type: 'button', onclick: intentar(async () => {
@@ -516,7 +516,7 @@ async function pintarIndicadores() {
     cifra(k.pendientes_despacho, `líneas por despachar (${k.reparaciones} reparaciones)`),
     cifra(dinero(k.valor.total, k.moneda), k.valor.sin_precio ? `valor pendiente (${k.valor.sin_precio} líneas sin precio)` : 'valor pendiente'),
     cifra(k.oh.total, `OH por despachar (${k.oh.demorados} demorados)`, k.oh.demorados ? 'alerta-cifra' : ''),
-    cifra(k.kam.pendientes, k.kam.dias_prom === null ? 'esperando a la KAM' : `esperando a la KAM (${k.kam.dias_prom} días prom.)`),
+    cifra(k.kam.pendientes, k.kam.dias_prom === null ? 'esperando al Apple Care Manager' : `esperando al Apple Care Manager (${k.kam.dias_prom} días prom.)`),
   ));
   v.append(h('p', { class: 'nota' }, `Fill rate: líneas cuyo límite (ETA + tolerancia) venció desde el ${fecha(fr.desde)}; a tiempo si la fecha de despacho registrada es igual o anterior al límite.`,
     fr.sin_registro ? ` ${fr.sin_registro} líneas salieron del reporte sin fecha de despacho y no se cuentan.` : ''));
@@ -646,7 +646,7 @@ async function pintarAdmin() {
   const etiquetas = {
     kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia de fill rate (días después de la ETA)',
     fr_tolerance_business: 'Tolerancia en días hábiles (1) o calendario (0)', exchange_codes: 'Garantías con precio exchange (separadas por coma)',
-    despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera de la KAM antes de alertar',
+    despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera del Apple Care Manager antes de alertar',
     oh_max_days: 'Días hábiles máximos de un OH sin despachar', currency: 'Moneda de los precios', email_signature: 'Firma de los correos',
   };
   const inputs = {};

@@ -127,6 +127,8 @@ def init_db() -> None:
         conn.executescript(SCHEMA)
         for k, v in config.DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
+        # v2: la KAM ahora se llama Apple Care Manager (ACM)
+        conn.execute("UPDATE cases SET estado='Pendiente aprobación ACM' WHERE estado='Pendiente aprobación KAM'")
         conn.commit()
     finally:
         conn.close()

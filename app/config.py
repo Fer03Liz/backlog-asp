@@ -35,7 +35,7 @@ DEFAULT_SETTINGS = {
     "email_signature": "Equipo de Planeación ASP\nIngram Micro",
 }
 
-ESTADOS = ["Nuevo", "En gestión", "Cotización enviada", "Pendiente aprobación KAM",
+ESTADOS = ["Nuevo", "En gestión", "Cotización enviada", "Pendiente aprobación ACM",
            "Recibido", "Despachado", "Sin solución"]
 APROBACION_KAM = ["No requiere", "Pendiente", "Aprobada", "Rechazada"]
 PROPUESTAS = ["", "Mantener", "FG", "Upgrade", "Miami", "Sustituto", "Otra"]

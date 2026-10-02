@@ -269,7 +269,7 @@ def enrich(c: dict, ctx: Context) -> dict:
         if c.get("aprobacion_kam") == "Pendiente":
             sol = d(c.get("kam_solicitado"))
             if sol and (t - sol).days > ctx.kam_days:
-                alerts.append(_alert("KAM_PENDIENTE", "ambar", f"Aprobación de la KAM pendiente desde el {fmt(sol)}."))
+                alerts.append(_alert("KAM_PENDIENTE", "ambar", f"Aprobación del Apple Care Manager pendiente desde el {fmt(sol)}."))
     if shipped and not closed and eta and cal.business_days_between(eta, t) > ctx.grace:
         alerts.append(_alert("DESPACHADO_SIGUE", "info", "Despachado y sigue en el reporte; confirmar cierre con la tienda."))
     if c.get("reopened") and not closed:

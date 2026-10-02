@@ -248,7 +248,7 @@ def update_case(key: str, body: CaseUpdate, user=Depends(EDITORS), conn=Depends(
         changes["fecha_recepcion"] = today
     if changes.get("fecha_despacho") and "estado" not in changes:
         changes["estado"] = "Despachado"
-    if changes.get("estado") == "Pendiente aprobación KAM" and "aprobacion_kam" not in changes:
+    if changes.get("estado") == "Pendiente aprobación ACM" and "aprobacion_kam" not in changes:
         changes["aprobacion_kam"] = "Pendiente"
     if "aprobacion_kam" in changes and changes["aprobacion_kam"] != old["aprobacion_kam"]:
         if changes["aprobacion_kam"] == "Pendiente":
