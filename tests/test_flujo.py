@@ -72,14 +72,22 @@ trk = next(x for x in g if x["en_kgb"])["guia"]
 r = c.post(f"/api/guides/{trk}/arrival", json={"fecha": "2026-09-29"}, headers=H)
 print("llegada guía", trk, r.json())
 
-# Correos
-em = c.get("/api/emails", params={"modo": "gestionados"}).json()
-print("correos gestionados hoy:", len(em["grupos"]))
-print(em["grupos"][0]["body"][:400])
-ship = em["grupos"][0]["ship_to"]
+# Correos diarios
+em = c.get("/api/emails").json()
+g0 = next(g for g in em["grupos"] if g["conteo"]["fecha"])
+print("correos del día:", len(em["grupos"]), "tiendas | ejemplo:", g0["tienda"], g0["conteo"])
+print(g0["body"][:500])
+ship = g0["ship_to"]
 assert c.put(f"/api/shipto/{ship}", json={"email": "tienda@ejemplo.com"}, headers=H).status_code == 200
-r = c.post(f"/api/emails/{ship}", json={"modo": "gestionados", "formato": "eml"}, headers=H)
-print("eml:", r.status_code, r.headers["content-type"], r.content[:120])
+r = c.post(f"/api/emails/{ship}", json={"formato": "eml"}, headers=H)
+print("eml:", r.status_code, r.headers["content-type"])
+r = c.post("/api/emails-lote", headers=H)
+print("zip:", r.status_code, r.headers["content-type"], len(r.content), "bytes")
+
+# Guías: texto de búsqueda e indicador de tiendas
+gs = c.get("/api/guides").json()["guias"]
+assert all("buscar" in g for g in gs)
+print("tiendas:", c.get("/api/kpis").json()["tiendas"])
 
 # Lector no puede editar
 c2 = TestClient(app)
