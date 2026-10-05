@@ -166,6 +166,10 @@ class Context:
         for r in conn.execute("SELECT * FROM prices"):
             self.prices[r["part"]] = dict(r)
             self.prices_norm.setdefault(r["part_norm"], dict(r))
+        self.parts = {r["part"]: dict(r) for r in conn.execute("SELECT * FROM parts")}
+        self.parts_norm = {}
+        for p in self.parts.values():
+            self.parts_norm.setdefault(p["part_norm"], p)            
         self.arrivals = {r["tracking"]: r["arrived_on"] for r in conn.execute("SELECT * FROM guide_arrivals")}
         self.shipto = {r["ship_to"]: dict(r) for r in conn.execute("SELECT * FROM shipto")}
 
@@ -186,6 +190,10 @@ def enrich(c: dict, ctx: Context) -> dict:
     tokens = json.loads(c.get("tracking") or "[]")
     subs_norm = {norm_part(p) for p in json.loads(c.get("subs") or "[]")}
     pnorm = norm_part(c.get("assembly"))
+    master = ctx.parts.get((c.get("assembly") or "").upper()) or ctx.parts_norm.get(pnorm) or {}
+    sustituto = master.get("substitute")          # sustituto oficial según el Parts Data
+    if sustituto and norm_part(sustituto) != pnorm:
+        subs_norm.add(norm_part(sustituto))    
     closed = c.get("source_status") == "cerrado"
     shipped = d(c.get("fecha_despacho"))
     pending = not closed and not shipped
@@ -209,7 +217,9 @@ def enrich(c: dict, ctx: Context) -> dict:
     kgb_event = next((r["current_event"] for r in mine if r["current_event"]), None)
     kgb_problem = next((r for r in mine if (r["current_event"] or "").lower().startswith("shipment delay")
                         or "out" in (r["sla_ind"] or "").lower() or r["issue"]), None)
-    part_ref = ctx.kgb_by_part.get(pnorm)
+    refs = [ctx.kgb_by_part[x] for x in {pnorm, norm_part(sustituto)} if x and x in ctx.kgb_by_part]
+    part_ref = {"qty": sum(r["qty"] for r in refs), "edd": min((r["edd"] for r in refs if r["edd"]), default=None),
+                "guides": set().union(*(r["guides"] for r in refs))} if refs else None
 
     # --- Llegada y despacho posible (no se despacha el mismo día ni fines de semana/festivos)
     arrived_guides = [ctx.arrivals[tk] for tk in tokens if tk in ctx.arrivals]
@@ -272,7 +282,7 @@ def enrich(c: dict, ctx: Context) -> dict:
             alerts.append(_alert("SIN_RECEPCION", "ambar", f"Debió llegar el {fmt(llegada)} y no hay recepción registrada."))
         if opt == "Miami" and part_ref and part_ref["qty"] > 0:
             alerts.append(_alert("POSIBLE_DOBLE_COMPRA", "ambar",
-                                 f"Esta parte viene en el KGB: {int(part_ref['qty'])} unid., primera llegada {fmt(d(part_ref['edd']))}."))
+                                 f"Esta parte (o su sustituto) viene en el KGB: {int(part_ref['qty'])} unid., primera llegada {fmt(d(part_ref['edd']))}."))
         if c.get("aprobacion_kam") == "Pendiente":
             sol = d(c.get("kam_solicitado"))
             if sol and (t - sol).days > ctx.kam_days:
@@ -285,10 +295,15 @@ def enrich(c: dict, ctx: Context) -> dict:
     levels = {a["level"] for a in alerts}
     nivel = "rojo" if "rojo" in levels else "ambar" if "ambar" in levels else "info" if "info" in levels else "ok"
 
-    # --- Precio según garantía
-    pr = ctx.prices.get(c.get("assembly")) or ctx.prices_norm.get(pnorm)
-    tipo_precio = "exchange" if (c.get("warranty") or "").upper() in ctx.exchange_codes else "stocking"
-    precio = pr.get(tipo_precio) if pr else None
+    # --- Precio: el caso siempre vale stocking. Fuera de garantía la tienda paga exchange y Apple la diferencia.
+    pr = ctx.prices.get((c.get("assembly") or "").upper()) or ctx.prices_norm.get(pnorm)
+    fuera_garantia = (c.get("warranty") or "").upper() in ctx.exchange_codes
+    tipo_precio = "fuera de garantía" if fuera_garantia else "en garantía"
+    precio = pr.get("stocking") if pr else None
+    precio_tienda = pr.get("exchange") if pr and fuera_garantia else (0 if pr else None)
+    precio_apple = precio - precio_tienda if precio is not None and precio_tienda is not None else None
+    precios_especiales = {k: pr.get(k) for k in ("battery", "display", "display_backglass", "backglass", "addon")
+                          if pr and pr.get(k)}
 
     # --- Prioridad (menor = más urgente): OH, luego rojos, luego cercanía al límite
     super_asp = (c.get("repair_strategy") or "").upper() == "Z8.2"
@@ -321,7 +336,9 @@ def enrich(c: dict, ctx: Context) -> dict:
         "llegada_fuente": fuente,
         "despacho_posible": iso(despacho),
         "fecha_cliente": iso(fecha_cliente),
-        "edad": (t - d(c["created_on"])).days if c.get("created_on") else None,
+        "edad_despacho": (despacho - d(c["created_on"])).days if despacho and c.get("created_on") else None,
+        "sustituto_pd": sustituto,
+        "descripcion_pd": master.get("description"),
         "kgb_match": match,
         "kgb_edd": iso(kgb_edd),
         "kgb_evento": kgb_event,
@@ -329,6 +346,9 @@ def enrich(c: dict, ctx: Context) -> dict:
         "parte_kgb_edd": part_ref["edd"] if part_ref else None,
         "precio": precio,
         "tipo_precio": tipo_precio,
+        "precio_tienda": precio_tienda,
+        "precio_apple": precio_apple,
+        "precios_especiales": precios_especiales,        
         "moneda": ctx.currency,
         "alerts": alerts,
         "nivel": nivel,
@@ -398,20 +418,33 @@ def kpis(conn, ctx: Context) -> dict:
         e = c["edad"] or 0
         buckets["0-7" if e <= 7 else "8-15" if e <= 15 else "16-30" if e <= 30 else "31+"] += 1
 
+    proy = [c["edad_despacho"] for c in pend if c["edad_despacho"] is not None]
+    real = [c["edad_despacho"] for c in all_rows if c["fecha_despacho"] and c["edad_despacho"] is not None]
+    rangos = {"0-7": 0, "8-15": 0, "16-30": 0, "31+": 0}
+    for e in proy:
+        rangos["0-7" if e <= 7 else "8-15" if e <= 15 else "16-30" if e <= 30 else "31+"] += 1
+    edad_despacho = {"proyectada_prom": round(sum(proy) / len(proy), 1) if proy else None,
+                     "real_prom": round(sum(real) / len(real), 1) if real else None,
+                     "despachadas": len(real), "rangos": rangos}
+    
     changed = [c for c in open_ if c["eta_changes"]]
     slips = [(d(c["eta_jenny"]) - d(c["eta_first"])).days for c in changed if c["eta_jenny"] and c["eta_first"]]
 
-    by_opt = defaultdict(lambda: {"abiertas": 0, "despachadas": 0, "ciclo": []})
+    by_opt = defaultdict(lambda: {"abiertas": 0, "despachadas": 0, "ciclo": [], "proyectado": []})
     for c in all_rows:
         k = c["option_short"]
         if c["pendiente"]:
             by_opt[k]["abiertas"] += 1
+            if c["edad_despacho"] is not None:
+                by_opt[k]["proyectado"].append(c["edad_despacho"])
         if c["fecha_despacho"] and c["created_on"]:
             by_opt[k]["despachadas"] += 1
             by_opt[k]["ciclo"].append((d(c["fecha_despacho"]) - d(c["created_on"])).days)
     por_opcion = [{"opcion": k, "abiertas": v["abiertas"], "despachadas": v["despachadas"],
-                   "ciclo_prom": round(sum(v["ciclo"]) / len(v["ciclo"]), 1) if v["ciclo"] else None}
+                   "ciclo_prom": round(sum(v["ciclo"]) / len(v["ciclo"]), 1) if v["ciclo"] else None,
+                   "proyectado_prom": round(sum(v["proyectado"]) / len(v["proyectado"]), 1) if v["proyectado"] else None}
                   for k, v in sorted(by_opt.items(), key=lambda kv: -kv[1]["abiertas"])]
+    
     # Tiendas (AASP = Ship-to) con líneas por despachar
     por_tienda = defaultdict(lambda: {"lineas": 0, "rojas": 0})
     for c in pend:
@@ -419,7 +452,8 @@ def kpis(conn, ctx: Context) -> dict:
         pt["lineas"] += 1
         pt["rojas"] += c["nivel"] == "rojo"
     top10 = sum(sorted((v["lineas"] for v in por_tienda.values()), reverse=True)[:10])
-    clientes = {(c["list_name"] or "").split()[0] for c in pend if (c["list_name"] or "").split()}
+    clientes = {(ctx.shipto.get(c["ship_to"]) or {}).get("cliente") or ((c["list_name"] or "").split() or ["—"])[0]
+                for c in pend}
     fechas = sorted(tiendas_por_carga, reverse=True)[:2]
     ultima = tiendas_por_carga[fechas[0]] if fechas else set()
     previa = tiendas_por_carga[fechas[1]] if len(fechas) > 1 else None
@@ -458,6 +492,7 @@ def kpis(conn, ctx: Context) -> dict:
         "proyeccion": {"vencen_7d": len(upcoming), "en_riesgo": len(at_risk)},
         "flujo": flujo,
         "edad": buckets,
+        "edad_despacho": edad_despacho,        
         "eta": {"con_cambios": len(changed), "abiertas": len(open_),
                 "corrimiento_prom": round(sum(slips) / len(slips), 1) if slips else None},
         "por_opcion": por_opcion,
@@ -513,7 +548,7 @@ def email_groups(conn, ctx: Context, signature: str) -> list:
                 f"- {ref(c)} | Despachado el {fmt(d(c['fecha_despacho']))}" for c in g["despachados"]))
         parts.append("Saludos,\n" + signature)
         info = ctx.shipto.get(ship_to) or {}
-        out.append({"ship_to": ship_to, "tienda": store, "email": info.get("email"),
+        out.append({"ship_to": ship_to, "tienda": store, "email": info.get("email"), "cc": info.get("cc_email"),
                     "conteo": {k: len(v) for k, v in g.items()},
                     "casos": [c["key_notif"] for c in todos],
                     "fechas": {c["key_notif"]: c["fecha_cliente"] for c in g["fecha"]},

@@ -263,54 +263,159 @@ def _find(df, *keys):
             return c
     return None
 
+PRICE_COLUMNS = {   # encabezado del archivo (en minúsculas) -> columna en la base
+    "precio de inventario": "stocking", "stocking price": "stocking", "stocking": "stocking",
+    "precio de intercambio": "exchange", "exchange price": "exchange", "exchange": "exchange",
+    "precio de solo batería": "battery", "battery only price": "battery",
+    "precio de solo pantalla": "display", "display only price": "display",
+    "precio de la pantalla y el cristal de la parte trasera": "display_backglass",
+    "display and back glass price": "display_backglass",
+    "precio de solo cristal trasero": "backglass",
+    "precio adicional": "addon", "add on price": "addon",
+}
+PART_HEADERS = ("row labels", "part", "part number", "parte", "assembly", "material num", "prod_id")
+
+
+def read_raw(data: bytes, name: str) -> pd.DataFrame:
+    """Primera hoja sin encabezado, para archivos exportados de tablas dinámicas."""
+    lower = name.lower()
+    try:
+        if lower.endswith((".xlsx", ".xlsm")):
+            return pd.read_excel(io.BytesIO(data), sheet_name=0, header=None, engine="openpyxl", dtype=object)
+        if lower.endswith(".csv"):
+            return pd.read_csv(io.BytesIO(data), header=None, dtype=str, sep=None, engine="python", encoding="utf-8-sig")
+    except Exception as exc:
+        raise LoadError(f"No se pudo leer el archivo: {exc.__class__.__name__}.") from exc
+    raise LoadError("Formato no admitido. Use .xlsx o .csv.")
+
 
 def load_prices(conn, data: bytes, name: str, user) -> dict:
-    df = _columns(next(iter(read_table(data, name).values())))
-    part_col = next((c for c in df.columns if c.lower() in
-                     ("assembly", "part", "part number", "part_number", "material", "material num", "prod_id", "parte")), None) \
-        or _find(df, "part", "material", "assembly")
-    stock_col, exch_col = _find(df, "stock"), _find(df, "exch")
-    desc_col = _find(df, "desc")
-    if not part_col or not (stock_col or exch_col):
-        raise LoadError("El archivo de precios necesita una columna de parte y al menos una de 'stocking' o 'exchange'.")
+    """Precios en COP por parte. Acepta la tabla dinámica 'Average of Precio' (encabezado en la fila 2)."""
+    raw = read_raw(data, name)
+    header_row = None
+    for i in range(min(10, len(raw))):
+        cells = [str(v).strip().lower() for v in raw.iloc[i].tolist()]
+        if any(c in PRICE_COLUMNS for c in cells):
+            header_row = i
+            break
+    if header_row is None:
+        raise LoadError("No encontré las columnas de precio (por ejemplo 'Precio de inventario' y 'Precio de intercambio').")
+    headers = [str(v).strip().lower() for v in raw.iloc[header_row].tolist()]
+    part_idx = next((i for i, h in enumerate(headers) if h in PART_HEADERS), 0)
+    cols = {i: PRICE_COLUMNS[h] for i, h in enumerate(headers) if h in PRICE_COLUMNS}
+    if "stocking" not in cols.values():
+        raise LoadError("Falta la columna de precio de inventario (stocking).")
+
+    def price(v):
+        n = to_num(v)
+        return n if n is not None and n > 1 else None    # "-", vacío y los marcadores de 1 no son precio
+
     conn.execute("DELETE FROM prices")
-    n = 0
-    now = db.now_iso()
-    for _, r in df.iterrows():
-        part = to_str(r[part_col])
-        if not part:
+    n, now = 0, db.now_iso()
+    for row in raw.iloc[header_row + 1:].itertuples(index=False):
+        part = to_str(row[part_idx])
+        if not part or part.lower() == "grand total":
             continue
-        conn.execute("INSERT OR REPLACE INTO prices(part, part_norm, description, stocking, exchange, updated_at) VALUES(?,?,?,?,?,?)",
-                     (part.upper(), logic.norm_part(part), to_str(r[desc_col]) if desc_col else None,
-                      to_num(r[stock_col]) if stock_col else None, to_num(r[exch_col]) if exch_col else None, now))
+        vals = {"stocking": None, "exchange": None, "battery": None, "display": None,
+                "display_backglass": None, "backglass": None, "addon": None}
+        for i, col in cols.items():
+            vals[col] = price(row[i])
+        if not any(vals.values()):
+            continue
+        part = part.upper()
+        conn.execute(
+            """INSERT OR REPLACE INTO prices(part, part_norm, stocking, exchange, battery, display, display_backglass,
+               backglass, addon, updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+            (part, logic.norm_part(part), vals["stocking"], vals["exchange"], vals["battery"], vals["display"],
+             vals["display_backglass"], vals["backglass"], vals["addon"], now))
         n += 1
-    stats = {"partes": n, "columna_parte": part_col, "stocking": stock_col, "exchange": exch_col}
+    con_exchange = conn.execute("SELECT COUNT(*) FROM prices WHERE exchange IS NOT NULL").fetchone()[0]
+    stats = {"partes": n, "con_exchange": con_exchange, "columnas": sorted(set(cols.values()))}
     _register_load(conn, "precios", name, hashlib.sha256(data).hexdigest() + now, date.today().isoformat(), user, n, stats)
     db.audit(conn, user, "load_prices", name, stats)
     return stats
 
 
+def load_parts(conn, data: bytes, name: str, user) -> dict:
+    """Parts Data de Apple: descripción, producto y sustituto de cada parte.
+    Los precios de este archivo no se usan (vienen del archivo de precios)."""
+    import openpyxl
+    if not name.lower().endswith((".xlsx", ".xlsm")):
+        raise LoadError("El Parts Data debe ser un archivo .xlsx.")
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+    except Exception as exc:
+        raise LoadError(f"No se pudo leer el archivo: {exc.__class__.__name__}.") from exc
+    rows = wb.worksheets[0].iter_rows(values_only=True)
+    header = [str(h).strip() if h is not None else "" for h in next(rows, [])]
+    idx = {h: i for i, h in enumerate(header)}
+    missing = [c for c in ("Part Number", "Part Description", "Substitute Part") if c not in idx]
+    if missing:
+        raise LoadError(f"Al Parts Data le faltan columnas: {', '.join(missing)}.")
+    get = lambda r, col: to_str(r[idx[col]]) if col in idx and idx[col] < len(r) else None
+    parts = {}
+    for r in rows:
+        pn = get(r, "Part Number")
+        if not pn:
+            continue
+        pn = pn.upper()
+        rec = parts.setdefault(pn, {"description": get(r, "Part Description"), "product": get(r, "Product Name"),
+                                    "group": get(r, "Component Group"), "substitute": None})
+        sub = get(r, "Substitute Part")
+        if sub:
+            rec["substitute"] = sub.upper()
+    wb.close()
+    if not parts:
+        raise LoadError("El Parts Data no tiene partes.")
+    now = db.now_iso()
+    conn.execute("DELETE FROM parts")
+    conn.executemany(
+        "INSERT INTO parts(part, part_norm, description, product, component_group, substitute, updated_at) VALUES(?,?,?,?,?,?,?)",
+        [(pn, logic.norm_part(pn), v["description"], v["product"], v["group"], v["substitute"], now) for pn, v in parts.items()])
+    stats = {"partes": len(parts), "con_sustituto": sum(1 for v in parts.values() if v["substitute"])}
+    _register_load(conn, "partes", name, hashlib.sha256(data).hexdigest(), date.today().isoformat(), user, len(parts), stats)
+    db.audit(conn, user, "load_parts", name, stats)
+    return stats
+
+
+def _pick(df, exact, *contains):
+    for c in df.columns:
+        if c.lower() in exact:
+            return c
+    return _find(df, *contains) if contains else None
+
+
 def load_shipto(conn, data: bytes, name: str, user) -> dict:
+    """Tiendas (AASP): nombre, ciudad, correo principal (Service manager) y copia (Coordinador).
+    La dirección no se guarda porque los correos solo llevan tiempos."""
     df = _columns(next(iter(read_table(data, name).values())))
-    id_col = _find(df, "ship")
+    id_col = _pick(df, ("shipto", "ship_to", "ship-to"), "ship")
     if not id_col:
-        raise LoadError("El archivo de tiendas necesita una columna 'Ship_to'.")
-    name_col = _find(df, "nombre", "name", "tienda")
-    mail_col = _find(df, "correo", "email", "mail")
-    city_col = _find(df, "ciudad", "city")
-    n, now = 0, db.now_iso()
+        raise LoadError("El archivo de tiendas necesita una columna 'shipto'.")
+    name_col = _pick(df, ("shipto_name", "nombre", "tienda"), "name", "nombre")
+    mail_col = _pick(df, ("service manager", "correo", "email"), "manager", "correo", "mail")
+    cc_col = _pick(df, ("coordinador", "cc", "copia"), "coordinador", "copia")
+    city_col = _pick(df, ("city", "ciudad"), "ciudad", "city")
+    active_col = _pick(df, ("active", "activo"))
+    n, skipped, now = 0, 0, db.now_iso()
     for _, r in df.iterrows():
         sid = to_str(r[id_col])
         if not sid:
             continue
+        if active_col and (to_str(r[active_col]) or "Y").upper() in ("N", "NO", "FALSE", "0"):
+            skipped += 1
+            continue
         old = conn.execute("SELECT * FROM shipto WHERE ship_to=?", (sid,)).fetchone()
         old = dict(old) if old else {}
-        conn.execute("INSERT OR REPLACE INTO shipto(ship_to, name, email, city, updated_at) VALUES(?,?,?,?,?)",
-                     (sid, (to_str(r[name_col]) if name_col else None) or old.get("name"),
-                      (to_str(r[mail_col]) if mail_col else None) or old.get("email"),
-                      (to_str(r[city_col]) if city_col else None) or old.get("city"), now))
+        email = (to_str(r[mail_col]) if mail_col else None) or old.get("email")
+        cc = (to_str(r[cc_col]) if cc_col else None) or old.get("cc_email")
+        cliente = email.split("@")[-1].lower() if email and "@" in email else old.get("cliente")
+        conn.execute(
+            "INSERT OR REPLACE INTO shipto(ship_to, name, email, cc_email, cliente, city, updated_at) VALUES(?,?,?,?,?,?,?)",
+            (sid, (to_str(r[name_col]) if name_col else None) or old.get("name"), email, cc, cliente,
+             (to_str(r[city_col]) if city_col else None) or old.get("city"), now))
         n += 1
-    stats = {"tiendas": n, "con_correo": bool(mail_col)}
+    stats = {"tiendas": n, "inactivas_omitidas": skipped, "con_correo": bool(mail_col), "con_copia": bool(cc_col)}
     _register_load(conn, "shipto", name, hashlib.sha256(data).hexdigest() + now, date.today().isoformat(), user, n, stats)
     db.audit(conn, user, "load_shipto", name, stats)
     return stats

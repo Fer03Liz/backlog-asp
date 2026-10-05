@@ -95,7 +95,7 @@ function pintarFuentes() {
   };
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
-    item('Backlog', u.backlog), item('KGB', u.kgb), item('Precios', u.precios), item('Tiendas', u.shipto),
+    item('Backlog', u.backlog), item('KGB', u.kgb), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),,
     h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
   );
 }
@@ -143,7 +143,7 @@ const ORDENES = {
   prioridad: (a, b) => a.prioridad - b.prioridad,
   limite: (a, b) => (a.dias_limite ?? 9999) - (b.dias_limite ?? 9999),
   eta: (a, b) => (a.dias_eta ?? 9999) - (b.dias_eta ?? 9999),
-  edad: (a, b) => (b.edad ?? 0) - (a.edad ?? 0),
+  edadDespacho: (a, b) => (b.edad_despacho ?? 0) - (a.edad_despacho ?? 0),
   tienda: (a, b) => (a.list_name || '').localeCompare(b.list_name || '', 'es'),
 };
 const GRUPOS = {
@@ -249,10 +249,10 @@ function filaCaso(c) {
   h('td', {}, h('span', { class: 'parte' }, c.assembly), h('span', { class: 'sub desc', title: c.description || '' }, c.description)),
   h('td', {}, h('span', { class: `etiqueta${c.option_short === 'OH' ? ' oh' : ''}` }, c.option_short)),
   h('td', { class: 'fecha' }, fecha(c.eta_jenny),
-    h('span', { class: `sub${dias !== null && dias < 0 ? ' dias-neg' : ''}` }, dias === null ? '' : dias === 0 ? 'hoy' : dias > 0 ? `en ${dias} d` : `hace ${-dias} d`)),
+  h('span', { class: `sub${dias !== null && dias < 0 ? ' dias-neg' : ''}` }, dias === null ? '' : dias === 0 ? 'hoy' : dias > 0 ? `en ${dias} d` : `hace ${-dias} d`)),
   h('td', {}, carril(c)),
   h('td', { class: 'fecha' }, fecha(c.despacho_posible), h('span', { class: 'sub' }, c.fecha_despacho ? 'despachado' : c.llegada_fuente)),
-  h('td', { class: 'num c-edad' }, c.edad ?? '—'),
+  h('td', { class: 'num c-edad' }, c.edad ?? '—', c.edad_despacho !== null ? h('span', { class: 'sub' }, `${c.edad_despacho} al desp.`) : null),
   h('td', {}, est),
   h('td', { class: 'num c-precio' }, dinero(c.precio, c.moneda), c.precio !== null ? h('span', { class: 'sub' }, c.tipo_precio) : null),
   );
@@ -336,7 +336,7 @@ async function abrirDetalle(key) {
     dato(c.fecha_despacho ? 'Despachado' : 'Despacho posible', fechaLarga(c.despacho_posible)),
     dato('Límite fill rate', fechaLarga(c.limite_fr)),
     dato('Fecha para la tienda', fechaLarga(c.fecha_cliente), c.fecha_comunicada ? ` (última comunicada: ${fechaLarga(c.fecha_comunicada)})` : ''),
-    dato('Edad', c.edad === null ? '—' : `${c.edad} días desde la creación`),
+        dato(c.fecha_despacho ? 'Edad al despacho' : 'Edad al despacho (proyectada)', c.edad_despacho === null ? '—' : `${c.edad_despacho} días`), `${c.edad} días desde la creación`),
   )));
 
   const g = {};
@@ -384,10 +384,16 @@ async function abrirDetalle(key) {
     dato('Solución', c.option_jenny || '—'),
     dato('Comentarios', c.comments_jenny || '—'),
     dato('Notas', c.notes_jenny || '—'),
-    c.subs_list.length ? dato('Sustitutos', c.subs_list.join(', ')) : null,
+    c.subs_list.length ? dato('Sustitutos en comentarios', c.subs_list.join(', ')) : null,
     dato('Parte', `${c.assembly} ${c.description || ''}`),
+    dato('Sustituto oficial', c.sustituto_pd || 'No tiene (Parts Data)'),
     dato('Equipo', c.product_description || c.material_desc || '—'),
-    dato('Garantía', `${c.warranty || '—'} (precio ${c.tipo_precio})`),
+    dato('Garantía', `${c.warranty || '—'} (${c.tipo_precio})`),
+    dato('Valor (stocking)', dinero(c.precio, c.moneda)),
+    c.precio !== null ? dato('Paga la tienda', c.precio_tienda === null ? 'Sin precio exchange' : dinero(c.precio_tienda, c.moneda)) : null,
+    c.precio !== null ? dato('Paga Apple', c.precio_apple === null ? '—' : dinero(c.precio_apple, c.moneda)) : null,
+    Object.keys(c.precios_especiales).length ? dato('Precios por tipo de reparación', Object.entries(c.precios_especiales)
+      .map(([k, v]) => `${{ battery: 'solo batería', display: 'solo pantalla', display_backglass: 'pantalla y cristal trasero', backglass: 'solo cristal trasero', addon: 'adicional' }[k]}: ${dinero(v, c.moneda)}`).join('; ')) : null,
     dato('Estrategia', `${c.repair_strategy || '—'}${c.super_asp ? ', se repara en el Super ASP' : ''}`),
     dato('PO de la tienda', c.po_number || '—'),
     dato('Serial', c.serial_no || '—'),
@@ -503,7 +509,7 @@ function tarjetaCorreo(g) {
           await api('PUT', `/api/shipto/${encodeURIComponent(g.ship_to)}`, { email: correo.value }); aviso('Correo de la tienda guardado.'); pintarCorreos();
         }),
       }, 'Guardar correo')] : null),
-    h('pre', {}, `Asunto: ${g.subject}\n\n${g.body}`),
+       h('pre', {}, `${g.cc ? `CC: ${g.cc}\n` : ''}Asunto: ${g.subject}\n\n${g.body}`),
     puedeEditar() ? h('div', { class: 'acciones' },
       h('button', {
         class: 'btn sec', type: 'button', onclick: intentar(async () => {
@@ -565,10 +571,18 @@ async function pintarIndicadores() {
     h('div', { class: 'panel' }, h('h2', {}, 'Edad de lo pendiente'),
       h('p', {}, 'Días desde la creación del caso.'),
       barras(edad.map(([b, n]) => [`${b} días`, n, b === '31+']), Math.max(...edad.map(([, n]) => n)))),
+          h('div', { class: 'panel' }, h('h2', {}, 'Edad al despacho'),
+      h('p', {}, 'En cuántos días se soluciona cada caso: de la creación al despacho real o, si aún no sale, al despacho posible.'),
+      h('div', { class: 'tira' },
+        cifra(k.edad_despacho.proyectada_prom === null ? '—' : `${k.edad_despacho.proyectada_prom} d`, 'proyectada (pendientes)'),
+        cifra(k.edad_despacho.real_prom === null ? '—' : `${k.edad_despacho.real_prom} d`, `real (${k.edad_despacho.despachadas} despachadas)`)),
+      barras(Object.entries(k.edad_despacho.rangos).map(([b, n]) => [`${b} días`, n, b === '31+']),
+        Math.max(1, ...Object.values(k.edad_despacho.rangos)))),
     h('div', { class: 'panel' }, h('h2', {}, 'Por solución'),
-      h('p', {}, 'Abiertas por tipo de solución y días promedio de la creación al despacho.'),
-      h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, ['Solución', 'Abiertas', 'Despachadas', 'Ciclo prom.'].map((t) => h('th', {}, t)))),
+      h('p', {}, 'Abiertas por tipo de solución, edad al despacho proyectada de lo pendiente y ciclo real de lo despachado.'),
+      h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, ['Solución', 'Abiertas', 'Proyectado', 'Despachadas', 'Ciclo real'].map((t) => h('th', {}, t)))),
         h('tbody', {}, k.por_opcion.map((o) => h('tr', {}, h('td', {}, o.opcion), h('td', { class: 'num' }, o.abiertas),
+                   h('td', { class: 'num' }, o.proyectado_prom === null ? '—' : `${o.proyectado_prom} d`),
           h('td', { class: 'num' }, o.despachadas), h('td', { class: 'num' }, o.ciclo_prom === null ? '—' : `${o.ciclo_prom} d`)))))),
     h('div', { class: 'panel' }, h('h2', {}, 'Confiabilidad de la ETA'),
       h('p', {}, 'Cuántas líneas abiertas han tenido cambio de ETA desde que entraron al reporte.'),
@@ -613,8 +627,9 @@ async function pintarCargas() {
   v.append(h('div', { class: 'rejilla' },
     tarjeta('backlog', 'Backlog diario', 'El archivo de la KAM (hojas Backlog y Allocated). Actualiza los casos que siguen, crea los nuevos y cierra los que ya no aparecen. Nunca borra la gestión del equipo.', true),
     tarjeta('kgb', 'KGB diario', 'Tránsito de Apple. Se filtra al cliente configurado y reemplaza al KGB anterior. El cruce se hace por número de guía.', true),
-    tarjeta('precios', 'Precios', 'Lista con columnas de parte, stocking y exchange. Se usa stocking o exchange según la garantía del caso.', false, true),
-    tarjeta('shipto', 'Tiendas', 'Ship-to con nombre, correo y ciudad. Si el archivo no trae correo, se conservan los que ya estén registrados.', false, true)));
+    tarjeta('precios', 'Precios', 'Archivo de precios en COP (tabla dinámica "Average of Precio" o columnas Precio de inventario e intercambio). Cada caso se valora a stocking.', false, true),
+    tarjeta('partes', 'Parts Data (sustitutos)', 'Parts Data de Apple (.xlsx). Toma descripción y sustituto oficial de cada parte; sus precios no se usan. Tarda cerca de un minuto.', false),
+    tarjeta('shipto', 'Tiendas', 'Archivo ASPs-Ingram-SHIPTO: shipto, nombre, ciudad, Service manager (para) y Coordinador (copia). No se guardan direcciones.', false, true)));
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Historial de cargas'), h('div', { id: 'historial' })));
   pintarHistorial();
 }
@@ -622,8 +637,9 @@ async function pintarCargas() {
 function resumenCarga(kind, r) {
   if (kind === 'backlog') return `Backlog del ${fecha(r.fecha)}: ${r.nuevas} nuevas, ${r.actualizadas} siguen, ${r.cerradas} salieron (${r.asignadas} asignadas), ${r.reabiertas} reabiertas, ${r.cambios_eta} cambios de ETA. Abiertas: ${r.abiertas}.`;
   if (kind === 'kgb') return `KGB del ${fecha(r.fecha)}: ${r.filas_cliente} de ${r.filas_archivo} filas del cliente, ${r.guias} guías.`;
-  if (kind === 'precios') return `${r.partes} partes con precio (columnas: ${r.columna_parte}, ${r.stocking || '—'}, ${r.exchange || '—'}).`;
-  return `${r.tiendas} tiendas cargadas${r.con_correo ? ' con correo' : ' (el archivo no trae correos)'}.`;
+  if (kind === 'precios') return `${r.partes} partes con precio, ${r.con_exchange} con precio exchange.`;
+  if (kind === 'partes') return `${r.partes} partes, ${r.con_sustituto} con sustituto oficial.`;
+  return `${r.tiendas} tiendas cargadas${r.inactivas_omitidas ? ` (${r.inactivas_omitidas} inactivas omitidas)` : ''}${r.con_copia ? ', con correo y copia' : ''}.`;
 }
 
 const intentarHist = intentar(async () => {

@@ -363,6 +363,8 @@ def _eml(group) -> bytes:
     msg = EmailMessage()
     if group["email"]:
         msg["To"] = group["email"]
+    if group.get("cc"):
+        msg["Cc"] = group["cc"]    
     msg["Subject"] = group["subject"]
     msg["X-Unsent"] = "1"   # Outlook lo abre como borrador listo para enviar
     msg.set_content(group["body"])
@@ -452,7 +454,7 @@ def get_kpis(user=Depends(current_user), conn=Depends(get_db)):
 @app.post("/api/upload/{kind}")
 async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Form(None),
                  user=Depends(EDITORS), conn=Depends(get_db)):
-    if kind not in ("backlog", "kgb", "precios", "shipto"):
+    if kind not in ("backlog", "kgb", "precios", "partes", "shipto"):
         raise HTTPException(404, "Tipo de archivo no reconocido.")
     name = (file.filename or "archivo").replace("\\", "/").split("/")[-1][:200]
     if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
@@ -470,6 +472,8 @@ async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Fo
             result = ingest.load_kgb(conn, data, name, fecha, user)
         elif kind == "precios":
             result = ingest.load_prices(conn, data, name, user)
+        elif kind == "partes":
+            result = ingest.load_parts(conn, data, name, user)        
         else:
             result = ingest.load_shipto(conn, data, name, user)
         conn.commit()
@@ -490,8 +494,8 @@ def loads(user=Depends(current_user), conn=Depends(get_db)):
 
 
 TEMPLATES = {
-    "precios": ["Part", "Description", "Stocking", "Exchange"],
-    "shipto": ["Ship_to", "Nombre", "Correo", "Ciudad"],
+    "precios": ["Part", "Precio de inventario", "Precio de intercambio"],
+    "shipto": ["shipto", "shipto_name", "city", "Service manager", "Coordinador"],
 }
 
 

@@ -97,6 +97,11 @@ CREATE TABLE IF NOT EXISTS prices(
   stocking REAL, exchange REAL, updated_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_prices_norm ON prices(part_norm);
+CREATE TABLE IF NOT EXISTS parts(
+  part TEXT PRIMARY KEY, part_norm TEXT, description TEXT, product TEXT,
+  component_group TEXT, substitute TEXT, updated_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_parts_norm ON parts(part_norm);
 CREATE TABLE IF NOT EXISTS shipto(
   ship_to TEXT PRIMARY KEY, name TEXT, email TEXT, city TEXT, updated_at TEXT
 );
@@ -109,7 +114,12 @@ CREATE TABLE IF NOT EXISTS emails_log(
   n_cases INTEGER, keys TEXT
 );
 """
-
+# Columnas agregadas después de la v1: se crean solas en bases existentes.
+MIGRATIONS = [
+    ("prices", "battery", "REAL"), ("prices", "display", "REAL"), ("prices", "display_backglass", "REAL"),
+    ("prices", "backglass", "REAL"), ("prices", "addon", "REAL"),
+    ("shipto", "cc_email", "TEXT"), ("shipto", "cliente", "TEXT"),
+]
 
 def connect() -> sqlite3.Connection:
     config.DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -125,6 +135,10 @@ def init_db() -> None:
     conn = connect()
     try:
         conn.executescript(SCHEMA)
+        for table, column, kind in MIGRATIONS:
+            existing = {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+            if column not in existing:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")        
         for k, v in config.DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings(key, value) VALUES(?, ?)", (k, v))
         # v2: la KAM ahora se llama Apple Care Manager (ACM)
