@@ -95,7 +95,7 @@ function pintarFuentes() {
   };
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
-    item('Backlog', u.backlog), item('KGB', u.kgb), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),,
+    item('Backlog', u.backlog), item('KGB', u.kgb), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
     h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
   );
 }
@@ -337,7 +337,7 @@ async function abrirDetalle(key) {
     dato('Límite fill rate', fechaLarga(c.limite_fr)),
     dato('Fecha para la tienda', fechaLarga(c.fecha_cliente), c.fecha_comunicada ? ` (última comunicada: ${fechaLarga(c.fecha_comunicada)})` : ''),
         dato(c.fecha_despacho ? 'Edad al despacho' : 'Edad al despacho (proyectada)', c.edad_despacho === null ? '—' : `${c.edad_despacho} días`), `${c.edad} días desde la creación`),
-  )));
+  ));
 
   const g = {};
   const campo = (label, el, ancho) => h('label', { class: `campo${ancho ? ' ancho' : ''}` }, label, el);
