@@ -432,14 +432,19 @@ class ShipToIn(BaseModel):
 
 @app.put("/api/shipto/{ship_to}")
 def update_shipto(ship_to: str, body: ShipToIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    """Cambia el correo (o la ciudad) de una tienda sin borrar la copia (CC) ni el cliente."""
     email = (body.email or "").strip() or None
     if email and not all("@" in e and "." in e.split("@")[-1] for e in email.replace(",", ";").split(";") if e.strip()):
         raise HTTPException(422, "Correo no válido. Separe varios correos con punto y coma.")
-    old = conn.execute("SELECT * FROM shipto WHERE ship_to=?", (ship_to,)).fetchone()
-    name = old["name"] if old else (conn.execute("SELECT list_name FROM cases WHERE ship_to=? LIMIT 1", (ship_to,)).fetchone() or {"list_name": None})["list_name"]
-    conn.execute("INSERT OR REPLACE INTO shipto(ship_to, name, email, city, updated_at) VALUES(?,?,?,?,?)",
-                 (ship_to, name, email, (body.city or "").strip() or (old["city"] if old else None), db.now_iso()))
-    db.audit(conn, user, "shipto_update", ship_to, {"email": email})
+    row = conn.execute("SELECT * FROM shipto WHERE ship_to=?", (ship_to,)).fetchone()
+    old = dict(row) if row else {}
+    name = old.get("name") or (conn.execute("SELECT list_name FROM cases WHERE ship_to=? LIMIT 1", (ship_to,)).fetchone() or {"list_name": None})["list_name"]
+    city = (body.city or "").strip() or old.get("city")
+    primero = (email or "").replace(",", ";").split(";")[0].strip()
+    cliente = primero.split("@")[-1].lower() if "@" in primero else old.get("cliente")
+    conn.execute("INSERT OR REPLACE INTO shipto(ship_to, name, email, cc_email, cliente, city, updated_at) VALUES(?,?,?,?,?,?,?)",
+                 (ship_to, name, email, old.get("cc_email"), cliente, city, db.now_iso()))
+    db.audit(conn, user, "shipto_update", ship_to, {"email": {"antes": old.get("email"), "ahora": email}})
     conn.commit()
     return {"ok": True}
 

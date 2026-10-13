@@ -336,6 +336,7 @@ def enrich(c: dict, ctx: Context) -> dict:
         "llegada_fuente": fuente,
         "despacho_posible": iso(despacho),
         "fecha_cliente": iso(fecha_cliente),
+        "edad": (t - d(c["created_on"])).days if c.get("created_on") else None,
         "edad_despacho": (despacho - d(c["created_on"])).days if despacho and c.get("created_on") else None,
         "sustituto_pd": sustituto,
         "descripcion_pd": master.get("description"),

@@ -143,6 +143,7 @@ const ORDENES = {
   prioridad: (a, b) => a.prioridad - b.prioridad,
   limite: (a, b) => (a.dias_limite ?? 9999) - (b.dias_limite ?? 9999),
   eta: (a, b) => (a.dias_eta ?? 9999) - (b.dias_eta ?? 9999),
+  edad: (a, b) => (b.edad ?? 0) - (a.edad ?? 0),
   edadDespacho: (a, b) => (b.edad_despacho ?? 0) - (a.edad_despacho ?? 0),
   tienda: (a, b) => (a.list_name || '').localeCompare(b.list_name || '', 'es'),
 };
@@ -189,7 +190,7 @@ function pintarCasos() {
       [['', 'Sin agrupar'], ['tienda', 'Tienda'], ['opcion', 'Solución'], ['estado', 'Estado'], ['nivel', 'Alerta'], ['guia', 'Guía'], ['parte', 'Parte']]
         .map(([k, t]) => h('option', { value: k, selected: S.grupo === k }, t)))),
     h('label', { class: 'campo' }, 'Ordenar por', h('select', { onchange: (ev) => { S.orden = ev.target.value; pintarTabla(); } },
-      [['prioridad', 'Prioridad'], ['limite', 'Días al límite de fill rate'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['tienda', 'Tienda']]
+            [['prioridad', 'Prioridad'], ['limite', 'Días al límite de fill rate'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['edadDespacho', 'Edad al despacho (mayor primero)'], ['tienda', 'Tienda']]
         .map(([k, t]) => h('option', { value: k, selected: S.orden === k }, t)))),
     h('span', { class: 'separa' }),
     h('a', { class: 'btn sec', href: '/api/export/cases.csv' }, 'Exportar CSV'),
@@ -330,14 +331,15 @@ async function abrirDetalle(key) {
       c.alerts.map((a) => h('div', { class: `alerta ${a.level}` }, a.text))));
   }
 
-  panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Fechas'), h('dl', { class: 'datos' },
+    panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Fechas'), h('dl', { class: 'datos' },
     dato('ETA de Apple', fechaLarga(c.eta_jenny), c.eta_changes ? ` (inicial ${fechaLarga(c.eta_first)}, ${c.eta_changes} cambio${c.eta_changes > 1 ? 's' : ''})` : ''),
     dato('Llegada', fechaLarga(c.llegada), ` (${c.llegada_fuente})`),
     dato(c.fecha_despacho ? 'Despachado' : 'Despacho posible', fechaLarga(c.despacho_posible)),
     dato('Límite fill rate', fechaLarga(c.limite_fr)),
     dato('Fecha para la tienda', fechaLarga(c.fecha_cliente), c.fecha_comunicada ? ` (última comunicada: ${fechaLarga(c.fecha_comunicada)})` : ''),
-        dato(c.fecha_despacho ? 'Edad al despacho' : 'Edad al despacho (proyectada)', c.edad_despacho === null ? '—' : `${c.edad_despacho} días`), `${c.edad} días desde la creación`),
-  ));
+    dato('Edad', c.edad === null ? '—' : `${c.edad} días desde la creación`),
+    dato(c.fecha_despacho ? 'Edad al despacho' : 'Edad al despacho (proyectada)', c.edad_despacho === null ? '—' : `${c.edad_despacho} días`),
+  )));
 
   const g = {};
   const campo = (label, el, ancho) => h('label', { class: `campo${ancho ? ' ancho' : ''}` }, label, el);
@@ -544,7 +546,7 @@ async function pintarIndicadores() {
 
   const ti = k.tiendas;
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Tiendas en backlog'),
-    h('p', {}, 'Tiendas (AASP) con al menos una línea por despachar. Los clientes se cuentan por la primera palabra del nombre de la tienda (ISHOP, MAC, WODEN…).'),
+    h('p', {}, 'Tiendas (AASP) con al menos una línea por despachar. El cliente es el dominio del correo de la tienda (archivo de tiendas); si la tienda no está en ese archivo, la primera palabra de su nombre (ISHOP, MAC, WODEN…).'),
     h('div', { class: 'tira' },
       cifra(ti.con_backlog, 'tiendas con backlog'),
       cifra(ti.clientes, 'clientes'),

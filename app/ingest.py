@@ -273,7 +273,7 @@ PRICE_COLUMNS = {   # encabezado del archivo (en minúsculas) -> columna en la b
     "precio de solo cristal trasero": "backglass",
     "precio adicional": "addon", "add on price": "addon",
 }
-PART_HEADERS = ("row labels", "part", "part number", "parte", "assembly", "material num", "prod_id")
+PART_HEADERS = ("row labels", "número de pieza", "numero de pieza", "part", "part number", "parte", "assembly", "material num", "prod_id")
 
 
 def read_raw(data: bytes, name: str) -> pd.DataFrame:
