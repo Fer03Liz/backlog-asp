@@ -232,3 +232,13 @@ textarea { width: 100%; min-height: 70px; border: 1px solid var(--linea); border
   .form { grid-template-columns: 1fr; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+
+
+/* Bloque B: abastecimiento */
+tr.parte-fila { cursor: pointer; }
+tr.parte-fila:hover td { background: var(--cobalto-suave); }
+tr.parte-detalle > td { background: #f7f9fa; padding: 10px 14px 14px; }
+tr.parte-fila .alerta { margin-bottom: 4px; }
+.var-sube { color: var(--verde); font-weight: 600; }
+.var-baja { color: var(--rojo); font-weight: 600; }

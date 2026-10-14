@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
     "kam_alert_days": "2",             # días esperando a la KAM antes de alertar
     "oh_max_days": "1",                # días hábiles máximos de un OH sin despachar
     "email_transit_days": "0",         # 0 = en el correo solo llevan fecha los repuestos en bodega
+    "oo_transit_days": "22",           # Open Orders: días de Apple a Colombia después del Recovery ETA
     "currency": "COP",
     "email_signature": "Equipo de Planeación ASP\nIngram Micro",
 }

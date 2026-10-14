@@ -95,12 +95,12 @@ function pintarFuentes() {
   };
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
-    item('Backlog', u.backlog), item('KGB', u.kgb), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
+      item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
     h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
   );
 }
 
-const vistas = { casos: pintarCasos, guias: pintarGuias, correos: pintarCorreos, indicadores: pintarIndicadores, cargas: pintarCargas, admin: pintarAdmin };
+const vistas = { casos: pintarCasos, guias: pintarGuias, partes: pintarPartes, correos: pintarCorreos, indicadores: pintarIndicadores, cargas: pintarCargas, admin: pintarAdmin };
 function mostrar(tab) {
   document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   document.querySelectorAll('.vista').forEach((v) => { v.hidden = v.id !== `v-${tab}`; });
@@ -381,6 +381,7 @@ async function abrirDetalle(key) {
       h('tbody', {}, det.kgb_guia.map((r) => h('tr', {}, h('td', {}, r.tracking), h('td', {}, r.prod_id), h('td', {}, r.qty),
         h('td', {}, fecha(r.edd)), h('td', {}, r.current_event || r.status), h('td', {}, r.sla_ind))))) : null,
     det.kgb_parte ? h('p', { class: 'nota' }, `Esta parte en todo el KGB: ${det.kgb_parte.qty} unidades, primera llegada ${fechaLarga(det.kgb_parte.edd)}${det.kgb_parte.guides.length ? `, guías ${det.kgb_parte.guides.join(', ')}` : ''}.`) : null));
+  panel.append(bloqueAbastecimiento(c));
 
   panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Datos de Apple (solo lectura)'), h('dl', { class: 'datos' },
     dato('Solución', c.option_jenny || '—'),
@@ -553,6 +554,7 @@ async function pintarIndicadores() {
       cifra(ti.con_rojas, 'tiendas con líneas en rojo', ti.con_rojas ? 'alerta-cifra' : ''),
       cifra(ti.top10_pct === null ? '—' : `${ti.top10_pct}%`, 'de las líneas está en las 10 tiendas con más casos'),
       cifra(ti.entraron === null ? '—' : `+${ti.entraron} / −${ti.salieron}`, 'tiendas que entraron / salieron en la última carga'))));    
+  v.append(await panelKgbColombia());
 
   const barras = (filas, max) => h('div', { class: 'barras' }, filas.flatMap(([label, n, roja]) => {
     const b = h('div', { class: `barra-v${roja ? ' roja' : ''}` }); b.style.width = `${max ? (n / max) * 100 : 0}%`;
@@ -601,6 +603,139 @@ async function pintarIndicadores() {
   ));
 }
 
+// ------------------------------------------------------------------ abastecimiento (bloque B)
+const pct1 = (x) => (x === null || x === undefined ? '—' : `${Number(x).toLocaleString('es-CO', { maximumFractionDigits: 1 })} %`);
+const pts1 = (x) => (x === null || x === undefined ? '—' : `${x > 0 ? '+' : ''}${Number(x).toLocaleString('es-CO', { maximumFractionDigits: 1 })} pts`);
+const unid = (x) => (x ? Number(x).toLocaleString('es-CO', { maximumFractionDigits: 0 }) : '—');
+const opcionesTexto = (o) => Object.entries(o || {}).map(([k, n]) => `${n} ${k}`).join(', ');
+
+async function pintarPartes() {
+  const v = vaciar($('#v-partes'));
+  const r = await api('GET', `/api/supply?todas=${S.pTodas ? 1 : 0}`);
+  const res = r.resumen; const sal = r.salidas || {}; const n = sal.conteo || {};
+  const cifra = (valor, label, cls) => h('div', { class: `cifra${cls ? ` ${cls}` : ''}` }, h('b', {}, valor), h('span', {}, label));
+  v.append(h('div', { class: 'panel' }, h('h2', {}, 'Abastecimiento por parte'),
+    h('p', {}, `Demanda del backlog frente a lo que viene de Apple: KGB del ${r.kgb_fecha ? fecha(r.kgb_fecha) : '(sin cargar)'} y Open Orders del ${r.oo_fecha ? fecha(r.oo_fecha) : '(sin cargar)'}. `,
+      `Una línea que sigue en Open Orders todavía no ha salido de Apple. La llegada de lo pedido se estima como la salida de Apple (Recovery ETA) + ${r.transito_dias} días; el parámetro está en Administración.`)));
+  v.append(h('div', { class: 'tira' },
+    cifra(res.sin_abasto, `partes sin pedido ni tránsito (${res.sin_abasto_casos} líneas del backlog)`, res.sin_abasto ? 'alerta-cifra' : ''),
+    cifra(res.solo_miami, `partes que solo trae Miami (${res.solo_miami_casos} líneas)`),
+    cifra(res.con_pedido, `de ${res.partes_con_casos} partes del backlog tienen pedido en Open Orders`),
+    cifra(unid(res.oo_unidades), `unidades en Open Orders (${res.oo_lineas} líneas, ${res.oo_ordenes} órdenes)`),
+    cifra(sal.desde ? (n.kgb || 0) + (n.otro_item || 0) + (n.sin_rastro || 0) : '—',
+      sal.desde ? `líneas salieron de Open Orders del ${fecha(sal.desde)} al ${fecha(sal.hasta)}: ${n.kgb || 0} ya en el KGB, ${n.otro_item || 0} cambiaron de ítem, ${n.sin_rastro || 0} sin rastro`
+        : 'líneas que salen de Open Orders (se ve desde la segunda carga)')));
+  const buscar = h('input', { type: 'search', value: S.pQ || '', placeholder: 'Parte o descripción', oninput: (ev) => { S.pQ = ev.target.value; filas(); } });
+  const filtro = h('select', { onchange: (ev) => { S.pFiltro = ev.target.value; filas(); } },
+    [['', 'Todas'], ['alerta', 'Con alerta'], ['SIN_ABASTO', 'Sin pedido ni tránsito'], ['pedido', 'Con pedido en Open Orders']]
+      .map(([k, t]) => h('option', { value: k, selected: (S.pFiltro || '') === k }, t)));
+  const todas = h('input', { type: 'checkbox', checked: !!S.pTodas, onchange: intentar(async (ev) => { S.pTodas = ev.target.checked; await pintarPartes(); }) });
+  const resumen = h('p', { class: 'resumen' });
+  const cuerpo = h('tbody');
+  v.append(h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Buscar', buscar), h('label', { class: 'campo' }, 'Mostrar', filtro),
+    h('label', { class: 'check' }, todas, 'Incluir partes pedidas que no están en el backlog')));
+  v.append(resumen);
+  v.append(h('div', { class: 'marco' }, h('table', {},
+    h('thead', {}, h('tr', {}, ['', 'Parte', 'Casos pendientes', 'KGB con guía', 'KGB sin guía', 'Open Orders', 'Estado en Apple', 'Llegada estimada', 'Límite más cercano', 'Alerta']
+      .map((t) => h('th', {}, t)))), cuerpo)));
+
+  function filas() {
+    const q = (S.pQ || '').trim().toLowerCase(); const f = S.pFiltro || '';
+    const lista = r.filas.filter((x) => {
+      if (q && !`${x.parte} ${x.descripcion || ''} ${x.sustituto || ''}`.toLowerCase().includes(q)) return false;
+      if (f === 'alerta' && !x.alertas.length) return false;
+      if (f === 'SIN_ABASTO' && !x.alertas.some((a) => a.code === 'SIN_ABASTO')) return false;
+      if (f === 'pedido' && !x.oo_qty) return false;
+      return true;
+    });
+    vaciar(resumen).append(h('b', {}, lista.length), ` de ${r.filas.length} partes`);
+    vaciar(cuerpo);
+    for (const x of lista) {
+      const detalle = h('tr', { class: 'parte-detalle', hidden: true }, h('td', { colspan: 10 }));
+      cuerpo.append(h('tr', { class: 'parte-fila', title: 'Clic para ver los pedidos de esta parte', onclick: intentar(async () => {
+        if (!detalle.hidden) { detalle.hidden = true; return; }
+        detalle.hidden = false; await pintarDetalleParte(x.parte, detalle.firstChild);
+      }) },
+      h('td', { class: 'nivel' }, h('span', { class: `punto ${x.nivel}`, title: x.alertas.map((a) => a.text).join('\n') || 'Sin alertas' })),
+      h('td', {}, h('span', { class: 'parte' }, x.parte), h('span', { class: 'sub desc', title: x.descripcion || '' }, x.descripcion),
+        x.sustituto ? h('span', { class: 'sub' }, `Sustituto: ${x.sustituto}`) : null),
+      h('td', { class: 'num' }, x.casos || '—', x.rojos ? h('span', { class: 'sub dias-neg' }, `${x.rojos} en rojo`) : null,
+        x.casos ? h('span', { class: 'sub' }, opcionesTexto(x.opciones)) : null),
+      h('td', { class: 'num' }, unid(x.kgb_con_guia), x.kgb_con_guia ? h('span', { class: 'sub' }, `EDD ${fecha(x.kgb_edd)}`) : null),
+      h('td', { class: 'num' }, unid(x.kgb_sin_guia), x.salieron_al_kgb ? h('span', { class: 'sub' }, `${x.salieron_al_kgb} líneas recién salidas de Open Orders`) : null),
+      h('td', { class: 'num' }, unid(x.oo_qty), x.oo_qty ? h('span', { class: 'sub' }, `${x.oo_lineas} líneas, ${x.oo_ordenes} órdenes`) : null),
+      h('td', {}, x.oo_estado || '—', x.oo_sin_fecha ? h('span', { class: 'sub' }, `${unid(x.oo_sin_fecha)} unid. sin fecha`) : null),
+      h('td', { class: 'fecha' }, fecha(x.oo_llegada), x.oo_salida ? h('span', { class: 'sub' }, `sale de Apple ${fecha(x.oo_salida)}`) : null),
+      h('td', { class: 'fecha' }, fecha(x.limite)),
+      h('td', {}, x.alertas.map((a) => h('div', { class: `alerta ${a.level}` }, a.text)), x.casos ? h('button', {
+        class: 'btn sec', type: 'button', onclick: (ev) => { ev.stopPropagation(); S.f.q = x.parte; S.sel = null; mostrar('casos'); },
+      }, 'Ver casos') : null)));
+      cuerpo.append(detalle);
+    }
+    if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: 10, class: 'vacio' }, 'Ninguna parte coincide.')));
+  }
+  filas();
+}
+
+async function pintarDetalleParte(parte, celda) {
+  vaciar(celda).append(h('p', { class: 'nota' }, 'Cargando…'));
+  const d = await api('GET', `/api/supply/${encodeURIComponent(parte)}`);
+  vaciar(celda);
+  celda.append(h('p', { class: 'nota' }, `${d.casos_pendientes} casos pendientes de esta parte${d.sustituto ? ` (se suma el sustituto ${d.sustituto})` : ''}. `,
+    d.historia.length ? `Unidades en Open Orders por día: ${d.historia.map((x) => `${fecha(x.file_date)} ${x.unidades}`).join(' · ')}.` : ''));
+  celda.append(d.open_orders.length ? h('table', { class: 'mini' },
+    h('thead', {}, h('tr', {}, ['Orden', 'Ítem', 'Parte', 'Unid.', 'Estado', 'Recovery ETA (texto de Apple)', 'Sale de Apple', 'Llegada est.', 'Tipo', 'En Open Orders desde'].map((t) => h('th', {}, t)))),
+    h('tbody', {}, d.open_orders.map((o) => h('tr', {}, h('td', {}, o.sales_ord), h('td', {}, o.item), h('td', {}, o.part), h('td', { class: 'num' }, o.remaining_qty),
+      h('td', {}, o.status, o.bloqueo ? h('span', { class: 'sub' }, `Bloqueo ${o.bloqueo}`) : null), h('td', {}, o.recovery_raw || '—'),
+      h('td', { class: 'fecha' }, fecha(o.salida_est)), h('td', { class: 'fecha' }, fecha(o.llegada_est)), h('td', {}, o.tipo), h('td', { class: 'fecha' }, fecha(o.first_seen))))))
+    : h('p', { class: 'nota' }, 'No hay líneas de esta parte en Open Orders.'));
+  if (d.salidas.length) {
+    celda.append(h('p', { class: 'nota' }, 'Salieron de Open Orders en la última carga: ',
+      d.salidas.map((s) => `${s.orden}/${s.item} (${s.cantidad} unid.): ${s.resultado}`).join('; '), '.'));
+  }
+}
+
+function bloqueAbastecimiento(c) {
+  const caja = h('div', { class: 'bloque' }, h('h3', {}, 'Abastecimiento (Open Orders de Apple)'), h('p', { class: 'nota' }, 'Cargando…'));
+  intentar(async () => {
+    const d = await api('GET', `/api/supply/${encodeURIComponent(c.assembly)}`);
+    caja.lastChild.remove();
+    const oo = d.open_orders; const total = oo.reduce((s, o) => s + (o.remaining_qty || 0), 0);
+    const proxima = oo.find((o) => o.llegada_est);
+    caja.append(h('p', { class: 'nota' }, oo.length
+      ? `${total} unid. pedidas a Apple en ${oo.length} líneas. ${proxima ? `La primera saldría de Apple el ${fechaLarga(proxima.salida_est)} y llegaría hacia el ${fechaLarga(proxima.llegada_est)} (estimado).` : 'Ninguna tiene fecha de salida todavía.'} Hay ${d.casos_pendientes} casos pendientes de esta parte.`
+      : `Esta parte no está en Open Orders. Hay ${d.casos_pendientes} casos pendientes de esta parte.`));
+    if (oo.length) {
+      caja.append(h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, ['Orden', 'Unid.', 'Estado', 'Sale de Apple', 'Llegada est.'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, oo.slice(0, 6).map((o) => h('tr', {}, h('td', {}, `${o.sales_ord}/${o.item}`), h('td', { class: 'num' }, o.remaining_qty),
+          h('td', {}, o.status), h('td', { class: 'fecha' }, fecha(o.salida_est)), h('td', { class: 'fecha' }, fecha(o.llegada_est)))))));
+      if (oo.length > 6) caja.append(h('p', { class: 'nota' }, `Y ${oo.length - 6} líneas más en la pestaña Abastecimiento.`));
+    }
+  })();
+  return caja;
+}
+
+async function panelKgbColombia() {
+  const filas = await api('GET', '/api/kgb-colombia');
+  const u = filas[0];
+  const cifra = (valor, label) => h('div', { class: 'cifra' }, h('b', {}, valor), h('span', {}, label));
+  const variacion = (x) => h('span', { class: x > 0 ? 'var-sube' : x < 0 ? 'var-baja' : '' }, pts1(x));
+  return h('div', { class: 'panel' }, h('h2', {}, 'KGB: lo que va a Colombia'),
+    h('p', {}, 'Parte del KGB completo (todos los países) que tiene destino Colombia, en filas y en unidades, y el cambio frente al KGB anterior. Las unidades se guardan desde las cargas hechas con esta versión.'),
+    u ? h('div', { class: 'tira' },
+      cifra(pct1(u.pct_filas), `de las filas del KGB del ${fecha(u.fecha)} (${u.filas_co} de ${u.filas})`),
+      cifra(u.var_filas === undefined ? '—' : pts1(u.var_filas), 'frente al KGB anterior (filas)'),
+      cifra(pct1(u.pct_unid), u.unid ? `de las unidades (${unid(u.unid_co)} de ${unid(u.unid)})` : 'de las unidades'),
+      cifra(u.var_unid === undefined ? '—' : pts1(u.var_unid), 'frente al KGB anterior (unidades)')) : h('p', { class: 'nota' }, 'Sin KGB cargado.'),
+    filas.length ? h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['KGB', 'Filas a Colombia', '% filas', 'Cambio', 'Unidades a Colombia', '% unidades', 'Cambio', 'Guías a Colombia'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, filas.map((x) => h('tr', {}, h('td', {}, fecha(x.fecha)), h('td', { class: 'num' }, `${x.filas_co} de ${x.filas}`), h('td', { class: 'num' }, pct1(x.pct_filas)),
+        h('td', { class: 'num' }, x.var_filas === undefined ? '—' : variacion(x.var_filas)),
+        h('td', { class: 'num' }, x.unid ? `${unid(x.unid_co)} de ${unid(x.unid)}` : '—'), h('td', { class: 'num' }, pct1(x.pct_unid)),
+        h('td', { class: 'num' }, x.var_unid === undefined || x.var_unid === null ? '—' : variacion(x.var_unid)),
+        h('td', { class: 'num' }, x.guias ? `${x.guias_co} de ${x.guias}` : (x.guias_co ?? '—')))))) : null);
+}
+
 // ------------------------------------------------------------------ cargas
 async function pintarCargas() {
   const v = vaciar($('#v-cargas'));
@@ -629,6 +764,7 @@ async function pintarCargas() {
   v.append(h('div', { class: 'rejilla' },
     tarjeta('backlog', 'Backlog diario', 'El archivo de la KAM (hojas Backlog y Allocated). Actualiza los casos que siguen, crea los nuevos y cierra los que ya no aparecen. Nunca borra la gestión del equipo.', true),
     tarjeta('kgb', 'KGB diario', 'Tránsito de Apple. Se filtra al cliente configurado y reemplaza al KGB anterior. El cruce se hace por número de guía.', true),
+    tarjeta('openorders', 'Open Orders diario', 'Reporte Colombia-Open Orders de Apple: lo pedido que todavía no sale. Reemplaza al anterior y guarda la foto del día. Cárguelo en orden de fecha.', true),
     tarjeta('precios', 'Precios', 'Archivo de precios en COP (tabla dinámica "Average of Precio" o columnas Precio de inventario e intercambio). Cada caso se valora a stocking.', false, true),
     tarjeta('partes', 'Parts Data (sustitutos)', 'Parts Data de Apple (.xlsx). Toma descripción y sustituto oficial de cada parte; sus precios no se usan. Tarda cerca de un minuto.', false),
     tarjeta('shipto', 'Tiendas', 'Archivo ASPs-Ingram-SHIPTO: shipto, nombre, ciudad, Service manager (para) y Coordinador (copia). No se guardan direcciones.', false, true)));
@@ -638,7 +774,8 @@ async function pintarCargas() {
 
 function resumenCarga(kind, r) {
   if (kind === 'backlog') return `Backlog del ${fecha(r.fecha)}: ${r.nuevas} nuevas, ${r.actualizadas} siguen, ${r.cerradas} salieron (${r.asignadas} asignadas), ${r.reabiertas} reabiertas, ${r.cambios_eta} cambios de ETA. Abiertas: ${r.abiertas}.`;
-  if (kind === 'kgb') return `KGB del ${fecha(r.fecha)}: ${r.filas_cliente} de ${r.filas_archivo} filas del cliente, ${r.guias} guías.`;
+  if (kind === 'kgb') return `KGB del ${fecha(r.fecha)}: ${r.filas_cliente} de ${r.filas_archivo} filas del cliente, ${r.guias} guías. Va a Colombia el ${pct1(r.pct_filas_co)} de las filas${r.pct_filas_co_ant !== undefined && r.pct_filas_co_ant !== null ? ` (${pts1(Math.round((r.pct_filas_co - r.pct_filas_co_ant) * 10) / 10)} frente al ${fecha(r.fecha_ant)})` : ''} y el ${pct1(r.pct_unid_co)} de las unidades.`;
+  if (kind === 'openorders') return `Open Orders del ${fecha(r.fecha)}: ${r.lineas} líneas de ${r.ordenes} órdenes (${r.unidades} unid.), ${r.nuevas} nuevas, ${r.salieron} salieron, ${r.sin_fecha} sin fecha de salida.${r.columnas_nuevas.length ? ` ATENCIÓN, columnas nuevas en el archivo: ${r.columnas_nuevas.join(', ')}.` : ''}`;
   if (kind === 'precios') return `${r.partes} partes con precio, ${r.con_exchange} con precio exchange.`;
   if (kind === 'partes') return `${r.partes} partes, ${r.con_sustituto} con sustituto oficial.`;
   return `${r.tiendas} tiendas cargadas${r.inactivas_omitidas ? ` (${r.inactivas_omitidas} inactivas omitidas)` : ''}${r.con_copia ? ', con correo y copia' : ''}.`;
@@ -691,6 +828,7 @@ async function pintarAdmin() {
     fr_tolerance_business: 'Tolerancia en días hábiles (1) o calendario (0)', exchange_codes: 'Garantías con precio exchange (separadas por coma)',
     despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera del Apple Care Manager antes de alertar',
     oh_max_days: 'Días hábiles máximos de un OH sin despachar',
+    oo_transit_days: 'Open Orders: días de Apple a Colombia después de la salida (Recovery ETA)',
     email_transit_days: 'Correo: días hábiles de tránsito confirmado que también llevan fecha (0 = solo repuestos en bodega)', currency: 'Moneda de los precios', email_signature: 'Firma de los correos',
   };
   const inputs = {};

@@ -13,9 +13,11 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from . import config, db, ingest, logic, security
+from . import abastecimiento, config, db, ingest, logic, security
 
 app = FastAPI(title="Backlog ASP", docs_url=None, redoc_url=None, openapi_url=None)
 db.init_db()
+abastecimiento.init_db()
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -455,11 +457,27 @@ def get_kpis(user=Depends(current_user), conn=Depends(get_db)):
     return logic.kpis(conn, logic.Context(conn))
 
 
+
+# ---------------------------------------------------------------- abastecimiento (bloque B)
+@app.get("/api/supply")
+def supply(todas: int = 0, user=Depends(current_user), conn=Depends(get_db)):
+    return abastecimiento.por_parte(conn, logic.Context(conn), incluir_sin_casos=bool(todas))
+
+
+@app.get("/api/supply/{part}")
+def supply_part(part: str, user=Depends(current_user), conn=Depends(get_db)):
+    return abastecimiento.detalle_parte(conn, logic.Context(conn), part)
+
+
+@app.get("/api/kgb-colombia")
+def kgb_colombia(user=Depends(current_user), conn=Depends(get_db)):
+    return abastecimiento.kgb_historial(conn)
+
 # ---------------------------------------------------------------- cargas
 @app.post("/api/upload/{kind}")
 async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Form(None),
                  user=Depends(EDITORS), conn=Depends(get_db)):
-    if kind not in ("backlog", "kgb", "precios", "partes", "shipto"):
+    if kind not in ("backlog", "kgb", "openorders", "precios", "partes", "shipto"):
         raise HTTPException(404, "Tipo de archivo no reconocido.")
     name = (file.filename or "archivo").replace("\\", "/").split("/")[-1][:200]
     if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
@@ -469,16 +487,18 @@ async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Fo
         raise HTTPException(413, "El archivo supera el tamaño máximo permitido (25 MB).")
     fecha = _date_or_none(fecha, "fecha")
     try:
-        if kind in ("backlog", "kgb"):
+        if kind in ("backlog", "kgb", "openorders"):
             db.backup(kind)
         if kind == "backlog":
             result = ingest.load_backlog(conn, data, name, fecha, user)
         elif kind == "kgb":
-            result = ingest.load_kgb(conn, data, name, fecha, user)
+            result = abastecimiento.load_kgb(conn, data, name, fecha, user)
+        elif kind == "openorders":
+            result = abastecimiento.load_open_orders(conn, data, name, fecha, user)
         elif kind == "precios":
             result = ingest.load_prices(conn, data, name, user)
         elif kind == "partes":
-            result = ingest.load_parts(conn, data, name, user)        
+            result = ingest.load_parts(conn, data, name, user)
         else:
             result = ingest.load_shipto(conn, data, name, user)
         conn.commit()
@@ -489,7 +509,6 @@ async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Fo
         conn.rollback()
         raise
     return {"ok": True, "resultado": result}
-
 
 @app.get("/api/loads")
 def loads(user=Depends(current_user), conn=Depends(get_db)):
@@ -618,7 +637,7 @@ class SettingsIn(BaseModel):
 
 @app.put("/api/settings")
 def put_settings(body: SettingsIn, user=Depends(ADMINS), conn=Depends(get_db)):
-    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days", "email_transit_days"}
+    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days", "email_transit_days", "oo_transit_days"}
     for k, v in body.settings.items():
         if k not in config.DEFAULT_SETTINGS:
             raise HTTPException(422, f"Parámetro desconocido: {k}")
