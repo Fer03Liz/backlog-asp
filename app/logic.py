@@ -222,8 +222,10 @@ def enrich(c: dict, ctx: Context) -> dict:
     edds = sorted(r["edd"] for r in mine if r["edd"])
     kgb_edd = d(edds[0]) if edds else None
     kgb_event = next((r["current_event"] for r in mine if r["current_event"]), None)
-    kgb_problem = next((r for r in mine if (r["current_event"] or "").lower().startswith("shipment delay")
-                        or "out" in (r["sla_ind"] or "").lower() or r["issue"]), None)
+    # Retrasada = Apple reporta demora (evento Shipment Delay o issue). "Out of SLA" es el SLA interno de Apple:
+    # solo informa, salvo que la EDD quede después de la ETA (eso lo cubre ETA_ANTES_KGB / GUIA_RETRASADA abajo).
+    kgb_problem = next((r for r in mine if (r["current_event"] or "").lower().startswith("shipment delay") or r["issue"]), None)
+    kgb_fuera_sla = next((r for r in mine if "out" in (r["sla_ind"] or "").lower()), None)
     refs = [ctx.kgb_by_part[x] for x in {pnorm, norm_part(sustituto)} if x and x in ctx.kgb_by_part]
     part_ref = {"qty": sum(r["qty"] for r in refs), "edd": min((r["edd"] for r in refs if r["edd"]), default=None),
                 "guides": set().union(*(r["guides"] for r in refs))} if refs else None
@@ -286,7 +288,11 @@ def enrich(c: dict, ctx: Context) -> dict:
                 alerts.append(_alert("ETA_ANTES_KGB", "ambar", f"La ETA ({fmt(eta)}) es anterior a la llegada que muestra el KGB ({fmt(kgb_edd)})."))
         notes_l = (c.get("notes_jenny") or "").lower()
         if opt == "In Transit" and kgb_problem:
-            alerts.append(_alert("GUIA_RETRASADA", "ambar", f"La guía {kgb_problem['tracking']} aparece fuera de SLA o con retraso en el KGB."))
+            alerts.append(_alert("GUIA_RETRASADA", "ambar", f"La guía {kgb_problem['tracking']} aparece con retraso en el KGB ({kgb_problem['current_event'] or 'issue'})."))
+        elif opt == "In Transit" and kgb_fuera_sla and eta and kgb_edd and kgb_edd > eta:
+            alerts.append(_alert("GUIA_RETRASADA", "ambar", f"La guía {kgb_fuera_sla['tracking']} va fuera del SLA de Apple y llega después de la ETA."))
+        elif opt == "In Transit" and kgb_fuera_sla:
+            alerts.append(_alert("FUERA_SLA_APPLE", "info", f"Apple marca la guía {kgb_fuera_sla['tracking']} fuera de su SLA, pero la EDD ({fmt(kgb_edd)}) no pasa la ETA."))
         elif opt == "In Transit" and "delayed" in notes_l and (not tokens or any(tk.lower() in notes_l for tk in tokens)):
             alerts.append(_alert("GUIA_RETRASADA", "ambar", "Apple reporta la guía como retrasada (Notes)."))
         if llegada and fuente in ("KGB (guía)", "ETA Apple") and opt in ("In Transit", "Miami") and llegada < t:

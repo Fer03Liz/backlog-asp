@@ -319,8 +319,10 @@ def guides(user=Depends(current_user), conn=Depends(get_db)):
     for tk, g in agg.items():
         rows = ctx.kgb_by_trk.get(tk, [])
         edds = sorted(r["edd"] for r in rows if r["edd"])
-        g["retrasada"] |= any("out" in (r["sla_ind"] or "").lower() or (r["current_event"] or "").lower().startswith("shipment delay")
-                              for r in rows)
+        g["retrasada"] |= any((r["current_event"] or "").lower().startswith("shipment delay") or r["issue"] for r in rows)
+        g["fuera_sla"] = any("out" in (r["sla_ind"] or "").lower() for r in rows)
+        if edds and g["eta_min"] and edds[0] > g["eta_min"]:
+            g["retrasada"] = True             # la llegada del KGB pasa la ETA de Apple más cercana
         texto = " ".join([tk, *g["claves"], *g["partes"], *(x or "" for x in g["tiendas"])]).lower()
         out.append({**g, "partes": len(g["partes"]), "tiendas": len(g["tiendas"]), "buscar": texto, "en_kgb": bool(rows),
                     "kgb_lineas": len(rows), "kgb_edd": edds[0] if edds else None,

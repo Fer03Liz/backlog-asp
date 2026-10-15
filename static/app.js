@@ -162,7 +162,7 @@ const GRUPOS = {
 const ALERTAS_NOMBRE = {
   FUERA_FR: 'Venció el plazo de fill rate', RIESGO_FR: 'Despacho después del límite', SIN_MARGEN: 'Sin margen en el plazo',
   OH_DEMORADO: 'OH demorado', ETA_NO_HABIL: 'ETA en día no hábil', GUIA_NO_KGB: 'Guía no aparece en KGB',
-  GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada',
+  GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada', FUERA_SLA_APPLE: 'Fuera de SLA Apple',
   SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la ACM',
   DESPACHADO_SIGUE: 'Despachado y sigue en reporte', REABIERTO: 'Reabierto', SIN_GUIA: 'In Transit sin guía',
   INV_DISPONIBLE: 'Se puede despachar con inventario propio', INV_OH_SIN_STOCK: 'OH sin inventario',
@@ -475,7 +475,8 @@ function pintarFilasGuias(guias, cuerpo, resumen) {
       h('td', {}, g.en_kgb ? h('span', { class: 'badge-si' }, `Sí (${g.kgb_lineas})`) : h('span', { class: 'badge-no' }, 'No')),
       h('td', { class: 'fecha' }, fecha(g.kgb_edd)), h('td', {}, g.kgb_evento || '—'),
       h('td', { class: 'fecha' }, fecha(g.eta_min)),
-      h('td', {}, g.retrasada ? h('span', { class: 'badge-no' }, 'Retrasada') : '—'),
+      h('td', {}, g.retrasada ? h('span', { class: 'badge-no', title: 'La EDD del KGB pasa la ETA de Apple o Apple reporta demora' }, 'Retrasada')
+        : g.fuera_sla ? h('span', { class: 'sub', title: 'Apple la marca Out of SLA en el KGB, pero llega antes de la ETA' }, 'Fuera de SLA Apple') : '—'),
       h('td', { class: 'fecha' }, g.llegada ? fecha(g.llegada) : '—'),
       h('td', {}, puedeEditar() && g.pendientes ? h('div', { class: 'acciones' }, f, h('button', {
         class: 'btn', type: 'button', onclick: intentar(async () => {
