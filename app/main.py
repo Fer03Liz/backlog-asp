@@ -12,13 +12,15 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import abastecimiento, acceso, config, db, ingest, logic, miami, security
+from . import abastecimiento, acceso, config, db, ingest, inventario, logic, miami, security, tiendas
 
 app = FastAPI(title="Backlog ASP", docs_url=None, redoc_url=None, openapi_url=None)
 db.init_db()
 abastecimiento.init_db()
 miami.init_db()
 acceso.init_db()
+tiendas.init_db()
+inventario.init_db()
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -543,6 +545,46 @@ def tienda_casos(ship_to: str | None = None, user=Depends(current_user), conn=De
     return acceso.casos_tienda(conn, logic.Context(conn), ship_tos)
 
 
+@app.get("/api/inventario/resumen")
+def inventario_resumen(user=Depends(current_user), conn=Depends(get_db)):
+    return inventario.resumen(conn, logic.Context(conn))
+
+
+# ---------------------------------------------------------------- tiendas del backlog ↔ archivo de tiendas (correos)
+@app.get("/api/tiendas-alias")
+def tiendas_alias(user=Depends(ADMINS), conn=Depends(get_db)):
+    return tiendas.sugerencias(conn)
+
+
+class AliasIn(BaseModel):
+    ship_to: str = Field(max_length=40)
+    ship_to_archivo: str = Field(max_length=40)
+
+
+@app.post("/api/tiendas-alias")
+def tiendas_alias_guardar(body: AliasIn, user=Depends(ADMINS), conn=Depends(get_db)):
+    try:
+        tiendas.asociar(conn, user, body.ship_to, body.ship_to_archivo)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc))
+    conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/tiendas-alias/auto")
+def tiendas_alias_auto(user=Depends(ADMINS), conn=Depends(get_db)):
+    n = tiendas.asociar_automatico(conn, user)
+    conn.commit()
+    return {"ok": True, "asociadas": n}
+
+
+@app.delete("/api/tiendas-alias/{ship_to}")
+def tiendas_alias_quitar(ship_to: str, user=Depends(ADMINS), conn=Depends(get_db)):
+    tiendas.quitar(conn, user, ship_to)
+    conn.commit()
+    return {"ok": True}
+
+
 @app.get("/api/tiendas-disponibles")
 def tiendas_disponibles(user=Depends(ADMINS), conn=Depends(get_db)):
     return {"tiendas": acceso.disponibles(conn)}
@@ -573,7 +615,7 @@ def user_tiendas_guardar(uid: int, body: TiendasIn, user=Depends(ADMINS), conn=D
 @app.post("/api/upload/{kind}")
 async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Form(None),
                  user=Depends(EDITORS), conn=Depends(get_db)):
-    if kind not in ("backlog", "kgb", "openorders", "precios", "partes", "shipto"):
+    if kind not in ("backlog", "kgb", "openorders", "inventario", "precios", "partes", "shipto"):
         raise HTTPException(404, "Tipo de archivo no reconocido.")
     name = (file.filename or "archivo").replace("\\", "/").split("/")[-1][:200]
     if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
@@ -591,12 +633,16 @@ async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Fo
             result = abastecimiento.load_kgb(conn, data, name, fecha, user)
         elif kind == "openorders":
             result = abastecimiento.load_open_orders(conn, data, name, fecha, user)
+        elif kind == "inventario":
+            result = inventario.load_inventario(conn, data, name, fecha, user)
         elif kind == "precios":
             result = ingest.load_prices(conn, data, name, user)
         elif kind == "partes":
             result = ingest.load_parts(conn, data, name, user)
         else:
             result = ingest.load_shipto(conn, data, name, user)
+        if kind in ("backlog", "shipto"):
+            result["tiendas_asociadas"] = tiendas.asociar_automatico(conn, user)
         conn.commit()
     except ingest.LoadError as exc:
         conn.rollback()
@@ -617,6 +663,7 @@ def loads(user=Depends(current_user), conn=Depends(get_db)):
 TEMPLATES = {
     "precios": ["Part", "Precio de inventario", "Precio de intercambio"],
     "shipto": ["shipto", "shipto_name", "city", "Service manager", "Coordinador"],
+    "inventario": ["Parte", "Cantidad", "Bodega", "Descripción"],
 }
 
 
@@ -624,7 +671,7 @@ TEMPLATES = {
 def template(kind: str, user=Depends(current_user)):
     if kind not in TEMPLATES:
         raise HTTPException(404, "Plantilla no encontrada.")
-    return Response(",".join(TEMPLATES[kind]) + "\n", media_type="text/csv",
+    return Response("\ufeff" + ",".join(TEMPLATES[kind]) + "\n", media_type="text/csv; charset=utf-8",
                     headers={"Content-Disposition": f'attachment; filename="plantilla_{kind}.csv"'})
 
 

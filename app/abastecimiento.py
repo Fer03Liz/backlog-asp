@@ -221,10 +221,18 @@ def load_kgb(conn, data: bytes, name: str, fecha, user) -> dict:
              to_str(r["CURRENT_EVENT"]), to_date(r.get("CURRENT_EVENT_DT")), to_date(r["EDD"]), to_date(r.get("PGI_DT")),
              to_str(r.get("IN_OUT_SLA_IND")), to_str(r.get("ISSUE_DESC")), r["_qty"], r["_cust"],
              to_str(r.get("SHIP_TO_COUNTRY_CD"))))
+    es661 = full["PROD_ID"].map(lambda v: logic.norm_part(to_str(v)).startswith("661-"))
+    transito = full["STATUS_DESC"].map(lambda v: (to_str(v) or "").lower() == "in transit")
+    co_mask = full.index.isin(co.index)
+    u = lambda m: float(full.loc[m, "_qty"].sum())
     stats = {"filas_archivo": int(total), "filas_cliente": int(len(df)), "guias": int(df["_trk"].dropna().nunique()),
              "unid_archivo": int(round(unid_total)), "filas_co": int(len(co)), "unid_co": int(round(co["_qty"].sum())),
              "guias_archivo": int(full["_trk"].dropna().nunique()), "guias_co": int(co["_trk"].dropna().nunique()),
-             "pct_filas_co": _pct(len(co), total), "pct_unid_co": _pct(co["_qty"].sum(), unid_total)}
+             "pct_filas_co": _pct(len(co), total), "pct_unid_co": _pct(co["_qty"].sum(), unid_total),
+             "unid_661": int(u(es661)), "unid_661_co": int(u(es661 & co_mask)), "pct_unid_661_co": _pct(u(es661 & co_mask), u(es661)),
+             "unid_transito": int(u(transito)), "unid_transito_co": int(u(transito & co_mask)),
+             "pct_unid_transito_co": _pct(u(transito & co_mask), u(transito)),
+             "unid_co_consumibles": int(u(co_mask & ~es661))}
     if prev:
         p = json.loads(prev["summary"] or "{}")
         stats["fecha_ant"] = prev["file_date"]
@@ -244,6 +252,8 @@ def kgb_historial(conn, n: int = 15) -> list:
         out.append({"fecha": r["file_date"], "filas_co": s.get("filas_co", s.get("filas_cliente")),
                     "filas": s.get("filas_archivo"), "pct_filas": pf, "unid_co": s.get("unid_co"),
                     "unid": s.get("unid_archivo"), "pct_unid": s.get("pct_unid_co"),
+                    "pct_unid_661": s.get("pct_unid_661_co"), "unid_661_co": s.get("unid_661_co"), "unid_661": s.get("unid_661"),
+                    "pct_unid_transito": s.get("pct_unid_transito_co"), "unid_co_otros": s.get("unid_co_consumibles"),
                     "guias_co": s.get("guias_co", s.get("guias")), "guias": s.get("guias_archivo")})
     for a, b in zip(out, out[1:]):
         b["var_filas"] = round(b["pct_filas"] - a["pct_filas"], 1) if None not in (a["pct_filas"], b["pct_filas"]) else None
@@ -355,12 +365,13 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
         grupo = [p] + ([sub] if sub and sub != p else [])
         o = _suma(grupo, oo, ("qty", "lineas", "salida", "llegada", "sin_fecha", "ordenes"))
         k = _suma(grupo, kg, ("con_guia", "sin_guia", "edd", "guias"))
+        inv_qty = sum(ctx.inv_por_parte.get(x, 0) for x in grupo)
         estados = Counter()
         for x in grupo:
             if x in oo:
                 estados.update(oo[x]["estados"])
         alertas = []
-        if d["necesitan"] and not o["qty"] and not (k["con_guia"] + k["sin_guia"]):
+        if d["necesitan"] and not o["qty"] and not (k["con_guia"] + k["sin_guia"]) and not inv_qty:
             compradas = d.get("miami_compra", 0)
             if d["necesitan"] > d["miami"]:
                 alertas.append({"code": "SIN_ABASTO", "level": "rojo",
@@ -388,6 +399,7 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
             "oo_qty": o["qty"], "oo_lineas": o["lineas"], "oo_ordenes": len(o["ordenes"]), "oo_salida": o["salida"],
             "oo_llegada": o["llegada"], "oo_sin_fecha": o["sin_fecha"], "oo_estado": estados.most_common(1)[0][0] if estados else None,
             "salieron_al_kgb": sum(sal_por_parte[x] for x in grupo),
+            "inventario": inv_qty,
             "alertas": alertas, "nivel": nivel,
         })
     orden = {"rojo": 0, "ambar": 1, "info": 2, "ok": 3}
@@ -397,6 +409,7 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
     tot = conn.execute("SELECT COUNT(*) n, COALESCE(SUM(remaining_qty),0) q, COUNT(DISTINCT sales_ord) o FROM open_orders").fetchone()
     return {
         "oo_fecha": oo_fecha, "kgb_fecha": ctx.kgb_date, "transito_dias": int(ctx.settings.get("oo_transit_days", "22")),
+        "inv_fecha": ctx.inv_fecha,
         "resumen": {"partes_con_casos": len(con_casos),
                     "sin_abasto": sum(1 for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "rojo" for a in f["alertas"])),
                     "sin_abasto_casos": sum(f["necesitan"] for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "rojo" for a in f["alertas"])),

@@ -91,11 +91,11 @@ def caso(user, c: dict) -> dict:
     if user["role"] != "acm":
         return c
     c = dict(c)
-    c.update(precio=None, precio_tienda=None, precio_apple=None, precios_especiales={}, compra_miami=None)
-    c["alerts"] = [a for a in c["alerts"] if not a["code"].startswith("MIAMI_")]
+    c.update(precio=None, precio_tienda=None, precio_apple=None, precios_especiales={}, compra_miami=None, inventario=None)
+    c["alerts"] = [a for a in c["alerts"] if not a["code"].startswith(("MIAMI_", "INV_"))]
     niveles = {a["level"] for a in c["alerts"]}
     c["nivel"] = "rojo" if "rojo" in niveles else "ambar" if "ambar" in niveles else "info" if "info" in niveles else "ok"
-    if c.get("llegada_fuente") == "Compra Miami":
+    if c.get("llegada_fuente") in ("Compra Miami", "Inventario propio"):
         c["llegada_fuente"] = "Estimada por Ingram"
     return c
 
@@ -134,7 +134,9 @@ def kpis(user, k: dict) -> dict:
 def abastecimiento(user, r: dict) -> dict:
     if user["role"] != "acm":
         return r
+    r["inv_fecha"] = None                          # el inventario propio es dato interno de Ingram
     for f in r["filas"]:
+        f["inventario"] = None
         for a in f["alertas"]:
             if a["code"] == "SIN_ABASTO" and a["level"] != "rojo":
                 a.update(level="ambar", text="Solo la trae la compra en Miami: no hay pedido a Apple ni tránsito.")
@@ -169,7 +171,7 @@ def estado_tienda(c: dict, hoy: str):
     """(estado, fecha, qué es la fecha). Fecha tentativa = ETA de Apple, salvo lo que está en gestión."""
     if c.get("fecha_despacho"):
         return "Despachado", c["fecha_despacho"], "Despachado el"
-    if c.get("llegada_fuente") in ("Recibido", "En inventario"):
+    if c.get("llegada_fuente") in ("Recibido", "En inventario", "Inventario propio"):
         return "En bodega, por despachar", c.get("fecha_cliente"), "Despacho estimado"
     eta = c.get("eta_jenny")
     if c.get("estado") in EN_GESTION or not eta or c.get("option_jenny") == "To be Defined" or eta < hoy:

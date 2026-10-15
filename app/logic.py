@@ -174,6 +174,9 @@ class Context:
         self.shipto = {r["ship_to"]: dict(r) for r in conn.execute("SELECT * FROM shipto")}
         from . import miami                      # bloque B3: compras en Miami y llegadas de Open Orders
         miami.cargar_contexto(self, conn)
+        from . import inventario, tiendas         # tiendas asociadas por nombre e inventario propio
+        tiendas.cargar_contexto(self, conn)
+        inventario.cargar_contexto(self, conn)
 
 
 def _alert(code, level, text):
@@ -200,6 +203,7 @@ def enrich(c: dict, ctx: Context) -> dict:
     shipped = d(c.get("fecha_despacho"))
     pending = not closed and not shipped
     compra = ctx.miami.get(c.get("key_notif"))     # compra en Miami activa (bloque B3)
+    inv = ctx.inv_asignado.get(c.get("key_notif"))  # unidad de inventario propio asignada
 
     # --- Cruce con KGB por guía (número de tracking que escribe la KAM)
     guide_rows = [r for tk in tokens for r in ctx.kgb_by_trk.get(tk, [])]
@@ -231,6 +235,8 @@ def enrich(c: dict, ctx: Context) -> dict:
         llegada, fuente = received, "Recibido"
     elif opt == "OH":
         llegada, fuente = d(c.get("oh_since")) or t, "En inventario"
+    elif inv:
+        llegada, fuente = d(ctx.inv_fecha), "Inventario propio"
     elif opt == "In Transit" and kgb_edd:
         llegada, fuente = kgb_edd, "KGB (guía)"
     elif compra and compra.get("eta"):
@@ -289,6 +295,7 @@ def enrich(c: dict, ctx: Context) -> dict:
             alerts.append(_alert("POSIBLE_DOBLE_COMPRA", "ambar",
                                  f"Esta parte (o su sustituto) viene en el KGB: {int(part_ref['qty'])} unid., primera llegada {fmt(d(part_ref['edd']))}."))
         alerts.extend(ctx.miami_alertas(c, ctx, compra, limite, pnorm, sustituto))
+        alerts.extend(ctx.inv_alertas(c, ctx, inv))
         if c.get("aprobacion_kam") == "Pendiente":
             sol = d(c.get("kam_solicitado"))
             if sol and (t - sol).days > ctx.kam_days:
@@ -356,6 +363,7 @@ def enrich(c: dict, ctx: Context) -> dict:
         "precio_tienda": precio_tienda,
         "precio_apple": precio_apple,
         "compra_miami": compra,
+        "inventario": inv,
         "precios_especiales": precios_especiales,        
         "moneda": ctx.currency,
         "alerts": alerts,
@@ -530,13 +538,13 @@ def email_groups(conn, ctx: Context, signature: str) -> list:
             if c["fecha_despacho"] >= last_sent.get(c["ship_to"], default_since):
                 groups[c["ship_to"]]["despachados"].append(c)
         elif c["pendiente"]:
-            en_bodega = c["llegada_fuente"] in ("Recibido", "En inventario")
+            en_bodega = c["llegada_fuente"] in ("Recibido", "En inventario", "Inventario propio")
             transito = (transit_days > 0 and c["llegada_fuente"] == "KGB (guía)" and c["nivel"] != "rojo"
                         and d(c["llegada"]) <= horizon)
             groups[c["ship_to"]]["fecha" if en_bodega or transito else "gestion"].append(c)
 
     def ref(c):
-        return f"Notificación {c['notifctn']}-{int(c['line_item'] or 0):02d} | PO {c.get('po_number') or '—'}"
+        return f"Notificación {c['notifctn']}-{int(c['line_item'] or 0):02d} | Parte {c.get('assembly') or '—'}"
 
     out = []
     for ship_to, g in groups.items():

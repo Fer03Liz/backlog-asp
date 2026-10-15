@@ -98,7 +98,7 @@ function pintarFuentes() {
   };
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
-    item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
+    item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Inventario', u.inventario), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
     h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
   );
 }
@@ -165,6 +165,7 @@ const ALERTAS_NOMBRE = {
   GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada',
   SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la ACM',
   DESPACHADO_SIGUE: 'Despachado y sigue en reporte', REABIERTO: 'Reabierto', SIN_GUIA: 'In Transit sin guía',
+  INV_DISPONIBLE: 'Se puede despachar con inventario propio', INV_OH_SIN_STOCK: 'OH sin inventario',
   MIAMI_EVALUAR: 'Miami: Apple lo trae antes', MIAMI_ATRASADA: 'Miami atrasada', MIAMI_SIN_COMPRA: 'Miami sin compra registrada',
 };
 
@@ -494,6 +495,7 @@ async function pintarCorreos() {
   const conCorreo = r.grupos.filter((g) => g.email).length;
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Correo diario por tienda'),
     h('p', {}, 'Un correo por tienda con tres bloques: por despachar (con fecha, solo repuestos ya en bodega), en gestión (sin fecha, para no comprometer ninguna) y despachados desde el último correo. Al copiar o descargar, la app guarda la fecha comunicada.'),
+    r.grupos.length > conCorreo ? h('p', { class: 'nota' }, `${r.grupos.length - conCorreo} tiendas no tienen correo: un administrador las asocia con el archivo de tiendas en Administración → Correos de las tiendas.`) : null,
     h('div', { class: 'barra' },
       h('p', { class: 'resumen' }, h('b', {}, r.grupos.length), ' tiendas, ', h('b', {}, conCorreo), ' con correo registrado.'),
       h('span', { class: 'separa' }),
@@ -642,12 +644,14 @@ async function pintarPartes() {
   const todas = h('input', { type: 'checkbox', checked: !!S.pTodas, onchange: intentar(async (ev) => { S.pTodas = ev.target.checked; await pintarPartes(); }) });
   const resumen = h('p', { class: 'resumen' });
   const cuerpo = h('tbody');
+  const conInv = !!S.me.ver_miami;            // el inventario propio es dato interno de Ingram
+  const columnas = conInv ? 11 : 10;
   v.append(h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Buscar', buscar), h('label', { class: 'campo' }, 'Mostrar', filtro),
     h('label', { class: 'check' }, todas, 'Incluir partes pedidas que no están en el backlog')));
   v.append(resumen);
   v.append(h('div', { class: 'marco' }, h('table', {},
-    h('thead', {}, h('tr', {}, ['', 'Parte', 'Casos pendientes', 'KGB con guía', 'KGB sin guía', 'Open Orders', 'Estado en Apple', 'Llegada estimada', 'Límite más cercano', 'Alerta']
-      .map((t) => h('th', {}, t)))), cuerpo)));
+    h('thead', {}, h('tr', {}, ['', 'Parte', 'Casos pendientes', conInv ? 'Inventario propio' : null, 'KGB con guía', 'KGB sin guía', 'Open Orders', 'Estado en Apple', 'Llegada estimada', 'Límite más cercano', 'Alerta']
+      .filter((t) => t !== null).map((t) => h('th', {}, t)))), cuerpo)));
 
   function filas() {
     const q = (S.pQ || '').trim().toLowerCase(); const f = S.pFiltro || '';
@@ -661,7 +665,7 @@ async function pintarPartes() {
     vaciar(resumen).append(h('b', {}, lista.length), ` de ${r.filas.length} partes`);
     vaciar(cuerpo);
     for (const x of lista) {
-      const detalle = h('tr', { class: 'parte-detalle', hidden: true }, h('td', { colspan: 10 }));
+      const detalle = h('tr', { class: 'parte-detalle', hidden: true }, h('td', { colspan: columnas }));
       cuerpo.append(h('tr', { class: 'parte-fila', title: 'Clic para ver los pedidos de esta parte', onclick: intentar(async () => {
         if (!detalle.hidden) { detalle.hidden = true; return; }
         detalle.hidden = false; await pintarDetalleParte(x.parte, detalle.firstChild);
@@ -671,6 +675,7 @@ async function pintarPartes() {
         x.sustituto ? h('span', { class: 'sub' }, `Sustituto: ${x.sustituto}`) : null),
       h('td', { class: 'num' }, x.casos || '—', x.rojos ? h('span', { class: 'sub dias-neg' }, `${x.rojos} en rojo`) : null,
         x.casos ? h('span', { class: 'sub' }, opcionesTexto(x.opciones)) : null),
+      conInv ? h('td', { class: 'num' }, r.inv_fecha ? unid(x.inventario) : '—') : null,
       h('td', { class: 'num' }, unid(x.kgb_con_guia), x.kgb_con_guia ? h('span', { class: 'sub' }, `EDD ${fecha(x.kgb_edd)}`) : null),
       h('td', { class: 'num' }, unid(x.kgb_sin_guia), x.salieron_al_kgb ? h('span', { class: 'sub' }, `${x.salieron_al_kgb} líneas recién salidas de Open Orders`) : null),
       h('td', { class: 'num' }, unid(x.oo_qty), x.oo_qty ? h('span', { class: 'sub' }, `${x.oo_lineas} líneas, ${x.oo_ordenes} órdenes`) : null),
@@ -682,9 +687,10 @@ async function pintarPartes() {
       }, 'Ver casos') : null)));
       cuerpo.append(detalle);
     }
-    if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: 10, class: 'vacio' }, 'Ninguna parte coincide.')));
+    if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: columnas, class: 'vacio' }, 'Ninguna parte coincide.')));
   }
   filas();
+  if (S.me.ver_miami) v.append(await panelInventario());
   if (S.me.ver_miami) v.append(await panelMiami());
 }
 
@@ -730,20 +736,16 @@ async function panelKgbColombia() {
   const filas = await api('GET', '/api/kgb-colombia');
   const u = filas[0];
   const cifra = (valor, label) => h('div', { class: 'cifra' }, h('b', {}, valor), h('span', {}, label));
-  const variacion = (x) => h('span', { class: x > 0 ? 'var-sube' : x < 0 ? 'var-baja' : '' }, pts1(x));
+  const variacion = (x) => (x === undefined || x === null ? '—' : h('span', { class: x > 0 ? 'var-sube' : x < 0 ? 'var-baja' : '' }, pts1(x)));
   return h('div', { class: 'panel' }, h('h2', {}, 'KGB: lo que va a Colombia'),
-    h('p', {}, 'Parte del KGB completo (todos los países) que tiene destino Colombia, en filas y en unidades, y el cambio frente al KGB anterior. Las unidades se guardan desde las cargas hechas con esta versión.'),
+    h('p', {}, 'Porcentaje de las líneas del KGB completo (todos los países) que tienen destino Colombia, y cuánto cambió frente al KGB anterior.'),
     u ? h('div', { class: 'tira' },
-      cifra(pct1(u.pct_filas), `de las filas del KGB del ${fecha(u.fecha)} (${u.filas_co} de ${u.filas})`),
-      cifra(u.var_filas === undefined ? '—' : pts1(u.var_filas), 'frente al KGB anterior (filas)'),
-      cifra(pct1(u.pct_unid), u.unid ? `de las unidades (${unid(u.unid_co)} de ${unid(u.unid)})` : 'de las unidades'),
-      cifra(u.var_unid === undefined ? '—' : pts1(u.var_unid), 'frente al KGB anterior (unidades)')) : h('p', { class: 'nota' }, 'Sin KGB cargado.'),
+      cifra(pct1(u.pct_filas), `de las líneas del KGB del ${fecha(u.fecha)} van a Colombia (${u.filas_co} de ${u.filas})`),
+      cifra(variacion(u.var_filas), 'frente al KGB anterior')) : h('p', { class: 'nota' }, 'Sin KGB cargado.'),
     filas.length ? h('table', { class: 'mini' },
-      h('thead', {}, h('tr', {}, ['KGB', 'Filas a Colombia', '% filas', 'Cambio', 'Unidades a Colombia', '% unidades', 'Cambio', 'Guías a Colombia'].map((t) => h('th', {}, t)))),
+      h('thead', {}, h('tr', {}, ['KGB', 'Líneas a Colombia', '% de líneas', 'Cambio', 'Guías a Colombia'].map((t) => h('th', {}, t)))),
       h('tbody', {}, filas.map((x) => h('tr', {}, h('td', {}, fecha(x.fecha)), h('td', { class: 'num' }, `${x.filas_co} de ${x.filas}`), h('td', { class: 'num' }, pct1(x.pct_filas)),
-        h('td', { class: 'num' }, x.var_filas === undefined ? '—' : variacion(x.var_filas)),
-        h('td', { class: 'num' }, x.unid ? `${unid(x.unid_co)} de ${unid(x.unid)}` : '—'), h('td', { class: 'num' }, pct1(x.pct_unid)),
-        h('td', { class: 'num' }, x.var_unid === undefined || x.var_unid === null ? '—' : variacion(x.var_unid)),
+        h('td', { class: 'num' }, variacion(x.var_filas)),
         h('td', { class: 'num' }, x.guias ? `${x.guias_co} de ${x.guias}` : (x.guias_co ?? '—')))))) : null);
 }
 
@@ -916,6 +918,67 @@ async function panelTiendasUsuarios(usuarios) {
   return caja;
 }
 
+// ------------------------------------------------------------------ inventario propio y correos de tiendas
+async function panelInventario() {
+  const r = await api('GET', '/api/inventario/resumen');
+  const caja = h('div', { class: 'panel' }, h('h2', {}, 'Inventario propio'));
+  if (!r.fecha) {
+    caja.append(h('p', {}, 'Todavía no se ha cargado un archivo de inventario. Cárguelo en Cargas → Inventario propio (hay plantilla). Con él, el tablero reparte las unidades entre los casos por prioridad y avisa qué se puede despachar ya y qué casos OH no tienen inventario.'));
+    return caja;
+  }
+  const cifra = (valor, label, cls) => h('div', { class: `cifra${cls ? ` ${cls}` : ''}` }, h('b', {}, valor), h('span', {}, label));
+  const abrir = (k) => h('button', { class: 'btn sec', type: 'button', title: 'Abrir el caso', onclick: () => { S.f.q = k; S.sel = k; mostrar('casos'); } }, k);
+  caja.append(...[h('p', {}, `Archivo del ${fecha(r.fecha)}: ${unid(r.unidades)} unidades de ${r.partes} partes. Las unidades se reparten por prioridad (OH, Super ASP y luego la ETA más cercana; si se acaba la parte, se usa el sustituto oficial). "Con inventario desde" cuenta las cargas seguidas en que la parte tuvo unidades.`),
+    h('div', { class: 'tira' },
+      cifra(r.casos.length, 'casos que se pueden despachar con inventario propio', r.casos.length ? 'alerta-cifra' : ''),
+      cifra(r.oh_sin_inventario.length, 'casos OH de Jenny sin unidades en el inventario', r.oh_sin_inventario.length ? 'alerta-cifra' : '')),
+    r.casos.length ? h('div', { class: 'marco' }, h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Parte', 'Solución', 'ETA Apple', 'Límite', 'Con inventario desde', 'Días hábiles'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, r.casos.slice(0, 300).map((x) => h('tr', {}, h('td', {}, abrir(x.key_notif)), h('td', {}, x.tienda),
+        h('td', {}, x.parte, x.via === 'sustituto' ? h('span', { class: 'sub' }, 'con el sustituto') : null), h('td', {}, x.opcion),
+        h('td', { class: 'fecha' }, fecha(x.eta)), h('td', { class: 'fecha' }, fecha(x.limite)), h('td', { class: 'fecha' }, fecha(x.desde)),
+        h('td', { class: `num${x.dias ? ' dias-neg' : ''}` }, x.dias ?? '—')))))) : null,
+    r.oh_sin_inventario.length ? [h('h2', { class: 'separado' }, 'OH sin inventario'), h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Parte', 'ETA Apple'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, r.oh_sin_inventario.map((x) => h('tr', {}, h('td', {}, abrir(x.key_notif)), h('td', {}, x.tienda), h('td', {}, x.parte),
+        h('td', { class: 'fecha' }, fecha(x.eta))))))] : null].flat().filter(Boolean));
+  return caja;
+}
+
+async function panelAliasTiendas() {
+  const r = await api('GET', '/api/tiendas-alias');
+  const caja = h('div', { class: 'panel' });
+  const repintar = async (msg) => { if (msg) aviso(msg); caja.replaceWith(await panelAliasTiendas()); };
+  caja.append(h('h2', {}, 'Correos de las tiendas'),
+    h('p', {}, 'El backlog trae los ship-to de CEVA y el archivo de tiendas los de Ingram, por eso no cruzan por código. Las tiendas con el mismo nombre se asocian solas (aunque cambie el orden de las palabras); las demás se asocian aquí revisando la sugerencia. Con la asociación, el correo diario va al Service manager con copia al Coordinador.'),
+    h('div', { class: 'acciones' }, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+      const x = await api('POST', '/api/tiendas-alias/auto'); await repintar(`${x.asociadas} tiendas asociadas por nombre idéntico.`);
+    }) }, 'Asociar las de nombre idéntico')));
+  if (r.pendientes.length) {
+    caja.append(h('h2', { class: 'separado' }, `Sin correo (${r.pendientes.length})`), h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['Tienda en el backlog', 'Ship-to', 'Abiertos', 'Tienda del archivo', 'Parecido', ''].map((t) => h('th', {}, t)))),
+      h('tbody', {}, r.pendientes.map((p) => {
+        const sel = h('select', { class: 'solo' }, h('option', { value: '' }, '— Elegir —'),
+          r.archivo.map((a) => h('option', { value: a.ship_to, selected: p.sugerencia && p.sugerencia.ship_to === a.ship_to }, `${a.nombre} (${a.ship_to})`)));
+        return h('tr', {}, h('td', {}, p.nombre), h('td', {}, p.ship_to), h('td', { class: 'num' }, p.abiertos || 0), h('td', {}, sel),
+          h('td', { class: 'num' }, p.sugerencia ? `${Math.round(p.sugerencia.puntaje * 100)} %` : '—'),
+          h('td', {}, h('button', { class: 'btn', type: 'button', onclick: intentar(async () => {
+            if (!sel.value) { aviso('Elija la tienda del archivo.', true); return; }
+            await api('POST', '/api/tiendas-alias', { ship_to: p.ship_to, ship_to_archivo: sel.value }); await repintar('Tienda asociada.');
+          }) }, 'Asociar')));
+      }))));
+  }
+  caja.append(h('h2', { class: 'separado' }, `Asociadas (${r.asociadas.length})`), r.asociadas.length ? h('table', { class: 'mini' },
+    h('thead', {}, h('tr', {}, ['Tienda en el backlog', 'Tienda del archivo', 'Para', 'Copia', 'Cómo', ''].map((t) => h('th', {}, t)))),
+    h('tbody', {}, r.asociadas.map((a) => h('tr', {}, h('td', {}, a.nombre), h('td', {}, a.nombre_archivo || a.ship_to_archivo), h('td', {}, a.email || '—'),
+      h('td', {}, a.cc || '—'), h('td', {}, a.origen),
+      h('td', {}, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+        await api('DELETE', `/api/tiendas-alias/${encodeURIComponent(a.ship_to)}`); await repintar('Asociación quitada.');
+      }) }, 'Quitar'))))))
+    : h('p', { class: 'nota' }, 'Ninguna todavía.'));
+  return caja;
+}
+
 // ------------------------------------------------------------------ cargas
 async function pintarCargas() {
   const v = vaciar($('#v-cargas'));
@@ -930,7 +993,7 @@ async function pintarCargas() {
         btn.disabled = true; res.hidden = true;
         try {
           const r = await api('POST', `/api/upload/${kind}`, fd);
-          res.className = 'resultado'; res.textContent = resumenCarga(kind, r.resultado); res.hidden = false;
+          res.className = 'resultado'; res.textContent = resumenCarga(kind, r.resultado) + (r.resultado.tiendas_asociadas ? ` ${r.resultado.tiendas_asociadas} tiendas del backlog quedaron con correo (mismo nombre en el archivo de tiendas).` : ''); res.hidden = false;
           S.me = await api('GET', '/api/me'); pintarFuentes(); await cargarCasos(); pintarHistorial();
         } catch (e) { res.className = 'resultado error'; res.textContent = e.message; res.hidden = false; }
         btn.disabled = false; archivo.value = '';
@@ -945,6 +1008,7 @@ async function pintarCargas() {
     tarjeta('backlog', 'Backlog diario', 'El archivo de la KAM (hojas Backlog y Allocated). Actualiza los casos que siguen, crea los nuevos y cierra los que ya no aparecen. Nunca borra la gestión del equipo.', true),
     tarjeta('kgb', 'KGB diario', 'Tránsito de Apple. Se filtra al cliente configurado y reemplaza al KGB anterior. El cruce se hace por número de guía.', true),
     tarjeta('openorders', 'Open Orders diario', 'Reporte Colombia-Open Orders de Apple: lo pedido que todavía no sale. Reemplaza al anterior y guarda la foto del día. Cárguelo en orden de fecha.', true),
+    tarjeta('inventario', 'Inventario propio', 'Nuestro inventario en bodega (on hand). Acepta columnas como Parte o Material, y Cantidad, Libre utilización u On hand; la bodega es opcional. Reemplaza al anterior y guarda la foto del día.', true, true),
     tarjeta('precios', 'Precios', 'Archivo de precios en COP (tabla dinámica "Average of Precio" o columnas Precio de inventario e intercambio). Cada caso se valora a stocking.', false, true),
     tarjeta('partes', 'Parts Data (sustitutos)', 'Parts Data de Apple (.xlsx). Toma descripción y sustituto oficial de cada parte; sus precios no se usan. Tarda cerca de un minuto.', false),
     tarjeta('shipto', 'Tiendas', 'Archivo ASPs-Ingram-SHIPTO: shipto, nombre, ciudad, Service manager (para) y Coordinador (copia). No se guardan direcciones.', false, true)));
@@ -954,7 +1018,8 @@ async function pintarCargas() {
 
 function resumenCarga(kind, r) {
   if (kind === 'backlog') return `Backlog del ${fecha(r.fecha)}: ${r.nuevas} nuevas, ${r.actualizadas} siguen, ${r.cerradas} salieron (${r.asignadas} asignadas), ${r.reabiertas} reabiertas, ${r.cambios_eta} cambios de ETA. Abiertas: ${r.abiertas}.`;
-  if (kind === 'kgb') return `KGB del ${fecha(r.fecha)}: ${r.filas_cliente} de ${r.filas_archivo} filas del cliente, ${r.guias} guías. Va a Colombia el ${pct1(r.pct_filas_co)} de las filas${r.pct_filas_co_ant !== undefined && r.pct_filas_co_ant !== null ? ` (${pts1(Math.round((r.pct_filas_co - r.pct_filas_co_ant) * 10) / 10)} frente al ${fecha(r.fecha_ant)})` : ''} y el ${pct1(r.pct_unid_co)} de las unidades.`;
+  if (kind === 'kgb') return `KGB del ${fecha(r.fecha)}: ${r.filas_cliente} de ${r.filas_archivo} filas del cliente, ${r.guias} guías. Va a Colombia el ${pct1(r.pct_filas_co)} de las líneas${r.pct_filas_co_ant !== undefined && r.pct_filas_co_ant !== null ? ` (${pts1(Math.round((r.pct_filas_co - r.pct_filas_co_ant) * 10) / 10)} frente al ${fecha(r.fecha_ant)})` : ''}.`;
+  if (kind === 'inventario') return `Inventario del ${fecha(r.fecha)}: ${r.unidades} unidades de ${r.partes} partes (${r.filas} filas). Columnas usadas: ${Object.values(r.columnas).join(', ')}.`;
   if (kind === 'openorders') return `Open Orders del ${fecha(r.fecha)}: ${r.lineas} líneas de ${r.ordenes} órdenes (${r.unidades} unid.), ${r.nuevas} nuevas, ${r.salieron} salieron, ${r.sin_fecha} sin fecha de salida.${r.columnas_nuevas.length ? ` ATENCIÓN, columnas nuevas en el archivo: ${r.columnas_nuevas.join(', ')}.` : ''}`;
   if (kind === 'precios') return `${r.partes} partes con precio, ${r.con_exchange} con precio exchange.`;
   if (kind === 'partes') return `${r.partes} partes, ${r.con_sustituto} con sustituto oficial.`;
@@ -1003,6 +1068,7 @@ async function pintarAdmin() {
         aviso('Usuario creado.'); pintarAdmin();
       }) }, 'Crear usuario'))));
   v.append(await panelTiendasUsuarios(usuarios));
+  v.append(await panelAliasTiendas());
 
   const etiquetas = {
     kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia de fill rate (días después de la ETA)',
