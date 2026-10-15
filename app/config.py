@@ -33,6 +33,7 @@ DEFAULT_SETTINGS = {
     "oh_max_days": "1",                # días hábiles máximos de un OH sin despachar
     "email_transit_days": "0",         # 0 = en el correo solo llevan fecha los repuestos en bodega
     "oo_transit_days": "22",           # Open Orders: días de Apple a Colombia después del Recovery ETA
+    "miami_lead_days": "7",            # Miami: días desde la compra hasta la llegada (por defecto)
     "currency": "COP",
     "email_signature": "Equipo de Planeación ASP\nIngram Micro",
 }
@@ -41,4 +42,4 @@ ESTADOS = ["Nuevo", "En gestión", "Cotización enviada", "Pendiente aprobación
            "Recibido", "Despachado", "Sin solución"]
 APROBACION_KAM = ["No requiere", "Pendiente", "Aprobada", "Rechazada"]
 PROPUESTAS = ["", "Mantener", "FG", "Upgrade", "Miami", "Sustituto", "Otra"]
-ROLES = ["admin", "editor", "lector"]
+ROLES = ["admin", "editor", "lector", "acm", "tienda"]

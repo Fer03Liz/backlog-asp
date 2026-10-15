@@ -12,12 +12,13 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import config, db, ingest, logic, security
-from . import abastecimiento, config, db, ingest, logic, security
+from . import abastecimiento, acceso, config, db, ingest, logic, miami, security
 
 app = FastAPI(title="Backlog ASP", docs_url=None, redoc_url=None, openapi_url=None)
 db.init_db()
 abastecimiento.init_db()
+miami.init_db()
+acceso.init_db()
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -61,6 +62,8 @@ def current_user(request: Request, conn=Depends(get_db)):
             raise HTTPException(403, "Solicitud rechazada (token CSRF).")
     if session["must_change_pw"] and request.url.path not in ALLOWED_WITH_PENDING_PW:
         raise HTTPException(403, "Debe cambiar su contraseña antes de continuar.")
+    if not acceso.permitido(session["role"], request.method, request.url.path):
+        raise HTTPException(403, "Su rol no tiene acceso a esta sección.")
     return session
 
 
@@ -149,6 +152,7 @@ def me(user=Depends(current_user), conn=Depends(get_db)):
     last = {r["kind"]: r["file_date"] for r in conn.execute(
         "SELECT kind, MAX(file_date) file_date FROM loads GROUP BY kind")}
     return {"username": user["username"], "full_name": user["full_name"], "role": user["role"],
+            "rol_nombre": acceso.NOMBRES.get(user["role"], user["role"]), **acceso.perfil(user["role"]),
             "csrf": user["csrf"], "must_change_pw": bool(user["must_change_pw"]), "hoy": ctx.today.isoformat(),
             "ultimas_cargas": last, "estados": config.ESTADOS, "aprobacion": config.APROBACION_KAM,
             "propuestas": config.PROPUESTAS, "roles": config.ROLES, "tolerancia": ctx.tol}
@@ -185,7 +189,7 @@ def change_password(body: PasswordIn, request: Request, user=Depends(current_use
 def list_cases(incluir_cerrados: int = 0, user=Depends(current_user), conn=Depends(get_db)):
     ctx = logic.Context(conn)
     return {"hoy": ctx.today.isoformat(), "kgb_fecha": ctx.kgb_date,
-            "casos": logic.load_cases(conn, ctx, include_closed=bool(incluir_cerrados))}
+            "casos": [acceso.caso(user, c) for c in logic.load_cases(conn, ctx, include_closed=bool(incluir_cerrados))]}
 
 
 @app.get("/api/cases/{key}")
@@ -199,13 +203,12 @@ def case_detail(key: str, user=Depends(current_user), conn=Depends(get_db)):
     guide_rows = [r for tk in case["tracking_list"] for r in ctx.kgb_by_trk.get(tk, [])]
     rel = {pnorm} | {logic.norm_part(s) for s in case["subs_list"]}
     return {
-        "caso": case,
+        "caso": acceso.caso(user, case),
         "historial": [dict(r) for r in conn.execute(
             "SELECT file_date, field, old, new FROM case_history WHERE key_notif=? ORDER BY id DESC", (key,))],
-        "comentarios": [dict(r) for r in conn.execute(
-            "SELECT username, at, text FROM comments WHERE key_notif=? ORDER BY id DESC", (key,))],
-        "gestion": [dict(r) for r in conn.execute(
-            "SELECT at, username, detail FROM audit_log WHERE target=? AND action='case_update' ORDER BY id DESC LIMIT 50", (key,))],
+        "comentarios": acceso.comentarios(conn, user, key),
+        "gestion": acceso.gestion(user, [dict(r) for r in conn.execute(
+            "SELECT at, username, detail FROM audit_log WHERE target=? AND action='case_update' ORDER BY id DESC LIMIT 50", (key,))]),
         "kgb_guia": [{k: r[k] for k in ("tracking", "prod_id", "prod_desc", "qty", "edd", "current_event", "sla_ind", "status")}
                      for r in guide_rows if r["prod_norm"] in rel],
         "kgb_guia_total": len(guide_rows),
@@ -271,18 +274,22 @@ def update_case(key: str, body: CaseUpdate, user=Depends(EDITORS), conn=Depends(
 
 class CommentIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
+    visibilidad: str = "interno"     # interno = solo el equipo; compartido = también lo ve el Apple Care Manager
 
 
 @app.post("/api/cases/{key}/comments")
-def add_comment(key: str, body: CommentIn, user=Depends(EDITORS), conn=Depends(get_db)):
+def add_comment(key: str, body: CommentIn, user=Depends(require("admin", "editor", "acm")), conn=Depends(get_db)):
     if not conn.execute("SELECT 1 FROM cases WHERE key_notif=?", (key,)).fetchone():
         raise HTTPException(404, "Caso no encontrado.")
     text = body.text.strip()
     if not text:
         raise HTTPException(422, "El comentario está vacío.")
-    conn.execute("INSERT INTO comments(key_notif, user_id, username, at, text) VALUES(?,?,?,?,?)",
-                 (key, user["id"], user["username"], db.now_iso(), text))
-    db.audit(conn, user, "comment", key, {"texto": text[:200]})
+    visibilidad = "compartido" if user["role"] == "acm" else body.visibilidad
+    if visibilidad not in ("interno", "compartido"):
+        raise HTTPException(422, "Visibilidad no válida.")
+    conn.execute("INSERT INTO comments(key_notif, user_id, username, at, text, visibilidad) VALUES(?,?,?,?,?,?)",
+                 (key, user["id"], user["username"], db.now_iso(), text, visibilidad))
+    db.audit(conn, user, "comment", key, {"texto": text[:200], "visibilidad": visibilidad})
     conn.commit()
     return {"ok": True}
 
@@ -454,14 +461,13 @@ def update_shipto(ship_to: str, body: ShipToIn, user=Depends(EDITORS), conn=Depe
 # ---------------------------------------------------------------- indicadores
 @app.get("/api/kpis")
 def get_kpis(user=Depends(current_user), conn=Depends(get_db)):
-    return logic.kpis(conn, logic.Context(conn))
-
+    return acceso.kpis(user, logic.kpis(conn, logic.Context(conn)))
 
 
 # ---------------------------------------------------------------- abastecimiento (bloque B)
 @app.get("/api/supply")
 def supply(todas: int = 0, user=Depends(current_user), conn=Depends(get_db)):
-    return abastecimiento.por_parte(conn, logic.Context(conn), incluir_sin_casos=bool(todas))
+    return acceso.abastecimiento(user, abastecimiento.por_parte(conn, logic.Context(conn), incluir_sin_casos=bool(todas)))
 
 
 @app.get("/api/supply/{part}")
@@ -472,6 +478,96 @@ def supply_part(part: str, user=Depends(current_user), conn=Depends(get_db)):
 @app.get("/api/kgb-colombia")
 def kgb_colombia(user=Depends(current_user), conn=Depends(get_db)):
     return abastecimiento.kgb_historial(conn)
+
+
+# ---------------------------------------------------------------- compras en Miami (bloque B3)
+class MiamiIn(BaseModel):
+    fecha_compra: str | None = None
+    eta: str | None = None
+    cantidad: float | None = None
+    part: str | None = Field(None, max_length=40)
+    po: str | None = Field(None, max_length=60)
+    notas: str | None = Field(None, max_length=500)
+
+
+class MiamiUpdate(BaseModel):
+    accion: str
+    fecha: str | None = None
+    motivo: str | None = Field(None, max_length=300)
+    eta: str | None = None
+    po: str | None = Field(None, max_length=60)
+    notas: str | None = Field(None, max_length=500)
+
+
+@app.get("/api/cases/{key}/miami")
+def miami_caso(key: str, user=Depends(current_user), conn=Depends(get_db)):
+    return {"compras": miami.listar_caso(conn, key), "lead_dias": int(db.get_settings(conn).get("miami_lead_days", "7"))}
+
+
+@app.post("/api/cases/{key}/miami")
+def miami_registrar(key: str, body: MiamiIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    try:
+        res = miami.registrar(conn, key, body.model_dump(), user)
+    except miami.MiamiError as exc:
+        conn.rollback()
+        raise HTTPException(exc.status, str(exc))
+    conn.commit()
+    return {"ok": True, **res}
+
+
+@app.patch("/api/miami/{pid}")
+def miami_actualizar(pid: int, body: MiamiUpdate, user=Depends(EDITORS), conn=Depends(get_db)):
+    try:
+        res = miami.actualizar(conn, pid, body.model_dump(exclude_unset=True), user)
+    except miami.MiamiError as exc:
+        conn.rollback()
+        raise HTTPException(exc.status, str(exc))
+    conn.commit()
+    return res
+
+
+@app.get("/api/miami")
+def miami_listado(todas: int = 0, user=Depends(current_user), conn=Depends(get_db)):
+    return miami.listado(conn, logic.Context(conn), incluir_cerradas=bool(todas))
+
+
+# ---------------------------------------------------------------- tiendas (rol tienda)
+@app.get("/api/tienda/casos")
+def tienda_casos(ship_to: str | None = None, user=Depends(current_user), conn=Depends(get_db)):
+    if user["role"] == "tienda":
+        ship_tos = acceso.tiendas_de(conn, user["id"])
+    elif user["role"] in acceso.INTERNOS and ship_to:      # vista previa del equipo
+        ship_tos = [ship_to]
+    else:
+        raise HTTPException(403, "Indique la tienda.")
+    return acceso.casos_tienda(conn, logic.Context(conn), ship_tos)
+
+
+@app.get("/api/tiendas-disponibles")
+def tiendas_disponibles(user=Depends(ADMINS), conn=Depends(get_db)):
+    return {"tiendas": acceso.disponibles(conn)}
+
+
+@app.get("/api/users/{uid}/tiendas")
+def user_tiendas(uid: int, user=Depends(ADMINS), conn=Depends(get_db)):
+    return {"ship_tos": acceso.tiendas_de(conn, uid)}
+
+
+class TiendasIn(BaseModel):
+    ship_tos: list[str] = Field(default_factory=list, max_length=500)
+
+
+@app.put("/api/users/{uid}/tiendas")
+def user_tiendas_guardar(uid: int, body: TiendasIn, user=Depends(ADMINS), conn=Depends(get_db)):
+    row = conn.execute("SELECT role FROM users WHERE id=?", (uid,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Usuario no encontrado.")
+    if row["role"] != "tienda":
+        raise HTTPException(422, "Solo los usuarios con rol tienda tienen tiendas asignadas.")
+    res = acceso.asignar(conn, user, uid, body.ship_tos)
+    conn.commit()
+    return {"ok": True, "ship_tos": res}
+
 
 # ---------------------------------------------------------------- cargas
 @app.post("/api/upload/{kind}")
@@ -509,6 +605,7 @@ async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Fo
         conn.rollback()
         raise
     return {"ok": True, "resultado": result}
+
 
 @app.get("/api/loads")
 def loads(user=Depends(current_user), conn=Depends(get_db)):
@@ -637,7 +734,7 @@ class SettingsIn(BaseModel):
 
 @app.put("/api/settings")
 def put_settings(body: SettingsIn, user=Depends(ADMINS), conn=Depends(get_db)):
-    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days", "email_transit_days", "oo_transit_days"}
+    ints = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days", "email_transit_days", "oo_transit_days", "miami_lead_days"}
     for k, v in body.settings.items():
         if k not in config.DEFAULT_SETTINGS:
             raise HTTPException(422, f"Parámetro desconocido: {k}")

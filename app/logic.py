@@ -172,6 +172,8 @@ class Context:
             self.parts_norm.setdefault(p["part_norm"], p)            
         self.arrivals = {r["tracking"]: r["arrived_on"] for r in conn.execute("SELECT * FROM guide_arrivals")}
         self.shipto = {r["ship_to"]: dict(r) for r in conn.execute("SELECT * FROM shipto")}
+        from . import miami                      # bloque B3: compras en Miami y llegadas de Open Orders
+        miami.cargar_contexto(self, conn)
 
 
 def _alert(code, level, text):
@@ -197,6 +199,7 @@ def enrich(c: dict, ctx: Context) -> dict:
     closed = c.get("source_status") == "cerrado"
     shipped = d(c.get("fecha_despacho"))
     pending = not closed and not shipped
+    compra = ctx.miami.get(c.get("key_notif"))     # compra en Miami activa (bloque B3)
 
     # --- Cruce con KGB por guía (número de tracking que escribe la KAM)
     guide_rows = [r for tk in tokens for r in ctx.kgb_by_trk.get(tk, [])]
@@ -230,6 +233,8 @@ def enrich(c: dict, ctx: Context) -> dict:
         llegada, fuente = d(c.get("oh_since")) or t, "En inventario"
     elif opt == "In Transit" and kgb_edd:
         llegada, fuente = kgb_edd, "KGB (guía)"
+    elif compra and compra.get("eta"):
+        llegada, fuente = d(compra["eta"]), "Compra Miami"
     elif eta:
         llegada, fuente = eta, "ETA Apple"
     else:
@@ -280,9 +285,10 @@ def enrich(c: dict, ctx: Context) -> dict:
             alerts.append(_alert("GUIA_RETRASADA", "ambar", "Apple reporta la guía como retrasada (Notes)."))
         if llegada and fuente in ("KGB (guía)", "ETA Apple") and opt in ("In Transit", "Miami") and llegada < t:
             alerts.append(_alert("SIN_RECEPCION", "ambar", f"Debió llegar el {fmt(llegada)} y no hay recepción registrada."))
-        if opt == "Miami" and part_ref and part_ref["qty"] > 0:
+        if opt == "Miami" and not compra and part_ref and part_ref["qty"] > 0:
             alerts.append(_alert("POSIBLE_DOBLE_COMPRA", "ambar",
                                  f"Esta parte (o su sustituto) viene en el KGB: {int(part_ref['qty'])} unid., primera llegada {fmt(d(part_ref['edd']))}."))
+        alerts.extend(ctx.miami_alertas(c, ctx, compra, limite, pnorm, sustituto))
         if c.get("aprobacion_kam") == "Pendiente":
             sol = d(c.get("kam_solicitado"))
             if sol and (t - sol).days > ctx.kam_days:
@@ -349,6 +355,7 @@ def enrich(c: dict, ctx: Context) -> dict:
         "tipo_precio": tipo_precio,
         "precio_tienda": precio_tienda,
         "precio_apple": precio_apple,
+        "compra_miami": compra,
         "precios_especiales": precios_especiales,        
         "moneda": ctx.currency,
         "alerts": alerts,
@@ -556,4 +563,4 @@ def email_groups(conn, ctx: Context, signature: str) -> list:
                     "subject": f"Estado de sus casos de repuesto – {store} – {fmt(t)}",
                     "body": "\n\n".join(parts)})
     out.sort(key=lambda g: g["tienda"])
-    return out
+    return out

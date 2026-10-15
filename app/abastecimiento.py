@@ -338,6 +338,7 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
         a["casos"] += 1
         a["necesitan"] += c["option_jenny"] not in SIN_ABASTO
         a["miami"] += c["option_jenny"] == "Miami"
+        a["miami_compra"] = a.get("miami_compra", 0) + bool(c.get("compra_miami"))
         a["rojos"] += c["nivel"] == "rojo"
         a["opciones"][c["option_short"]] += 1
         a["parte"] = a["parte"] or c["assembly"]
@@ -360,12 +361,17 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
                 estados.update(oo[x]["estados"])
         alertas = []
         if d["necesitan"] and not o["qty"] and not (k["con_guia"] + k["sin_guia"]):
+            compradas = d.get("miami_compra", 0)
             if d["necesitan"] > d["miami"]:
                 alertas.append({"code": "SIN_ABASTO", "level": "rojo",
                                 "text": "Parte sin pedido ni tránsito: no está en Open Orders ni en el KGB."})
-            else:
+            elif compradas < d["miami"]:
                 alertas.append({"code": "SIN_ABASTO", "level": "ambar",
-                                "text": "Solo la trae la compra en Miami: no hay pedido a Apple ni tránsito."})
+                                "text": f"Solo la trae la compra en Miami ({compradas} de {d['miami']} casos con compra registrada)."})
+            else:
+                alertas.append({"code": "SIN_ABASTO", "level": "info",
+                                "text": "Solo la trae Miami; " + ("el caso tiene compra registrada." if d["miami"] == 1
+                                                                  else f"los {d['miami']} casos tienen compra registrada.")})
         if d["necesitan"] and o["sin_fecha"] and not (k["con_guia"] + k["sin_guia"]):
             alertas.append({"code": "PEDIDO_SIN_FECHA", "level": "ambar",
                             "text": f"{int(o['sin_fecha'])} unid. pedidas sin Recovery ETA en Open Orders."})
@@ -394,8 +400,8 @@ def por_parte(conn, ctx, incluir_sin_casos: bool = False) -> dict:
         "resumen": {"partes_con_casos": len(con_casos),
                     "sin_abasto": sum(1 for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "rojo" for a in f["alertas"])),
                     "sin_abasto_casos": sum(f["necesitan"] for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "rojo" for a in f["alertas"])),
-                    "solo_miami": sum(1 for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "ambar" for a in f["alertas"])),
-                    "solo_miami_casos": sum(f["necesitan"] for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] == "ambar" for a in f["alertas"])),
+                    "solo_miami": sum(1 for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] != "rojo" for a in f["alertas"])),
+                    "solo_miami_casos": sum(f["necesitan"] for f in con_casos if any(a["code"] == "SIN_ABASTO" and a["level"] != "rojo" for a in f["alertas"])),
                     "pedido_sin_fecha": sum(1 for f in con_casos if any(a["code"] == "PEDIDO_SIN_FECHA" for a in f["alertas"])),
                     "con_pedido": sum(1 for f in con_casos if f["oo_qty"]),
                     "oo_lineas": tot["n"], "oo_unidades": int(tot["q"]), "oo_ordenes": tot["o"]},

@@ -6,7 +6,7 @@ const S = {
   f: { q: '', opcion: '', tienda: '', estado: '', alerta: '', guia: '', superAsp: false, cerrados: false },
   grupo: '', orden: 'prioridad', colapsados: new Set(), sel: null,
 };
-const puedeEditar = () => S.me && S.me.role !== 'lector';
+const puedeEditar = () => !!(S.me && S.me.puede_editar);
 
 // ------------------------------------------------------------------ utilidades
 function h(tag, props, ...kids) {
@@ -77,11 +77,14 @@ function descargar(blob, nombre) {
 async function iniciar() {
   S.me = await api('GET', '/api/me');
   S.hoy = S.me.hoy;
-  $('#quien').textContent = `${S.me.full_name || S.me.username} (${S.me.role})`;
+  $('#quien').textContent = `${S.me.full_name || S.me.username} (${S.me.rol_nombre || S.me.role})`;
   $('#tab-admin').hidden = S.me.role !== 'admin';
+  if (S.me.pestanas) document.querySelectorAll('#tabs button').forEach((b) => { b.hidden = !S.me.pestanas.includes(b.dataset.tab); });
+  document.body.classList.toggle('sin-precios', !S.me.ver_precios);
   $('#salir').addEventListener('click', intentar(async () => { await api('POST', '/api/logout'); location.href = '/login'; }));
   document.querySelectorAll('#tabs button').forEach((b) => b.addEventListener('click', () => mostrar(b.dataset.tab)));
   if (S.me.must_change_pw) return cambiarClave(true);
+  if (S.me.role === 'tienda') { $('#fuentes').hidden = true; mostrar('tienda'); return; }
   pintarFuentes();
   await cargarCasos();
   mostrar('casos');
@@ -95,12 +98,12 @@ function pintarFuentes() {
   };
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
-      item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
+    item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
     h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
   );
 }
 
-const vistas = { casos: pintarCasos, guias: pintarGuias, partes: pintarPartes, correos: pintarCorreos, indicadores: pintarIndicadores, cargas: pintarCargas, admin: pintarAdmin };
+const vistas = { casos: pintarCasos, guias: pintarGuias, partes: pintarPartes, correos: pintarCorreos, indicadores: pintarIndicadores, cargas: pintarCargas, admin: pintarAdmin, tienda: () => pintarTienda() };
 function mostrar(tab) {
   document.querySelectorAll('#tabs button').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
   document.querySelectorAll('.vista').forEach((v) => { v.hidden = v.id !== `v-${tab}`; });
@@ -162,6 +165,7 @@ const ALERTAS_NOMBRE = {
   GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada',
   SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la ACM',
   DESPACHADO_SIGUE: 'Despachado y sigue en reporte', REABIERTO: 'Reabierto', SIN_GUIA: 'In Transit sin guía',
+  MIAMI_EVALUAR: 'Miami: Apple lo trae antes', MIAMI_ATRASADA: 'Miami atrasada', MIAMI_SIN_COMPRA: 'Miami sin compra registrada',
 };
 
 function pintarCasos() {
@@ -190,10 +194,10 @@ function pintarCasos() {
       [['', 'Sin agrupar'], ['tienda', 'Tienda'], ['opcion', 'Solución'], ['estado', 'Estado'], ['nivel', 'Alerta'], ['guia', 'Guía'], ['parte', 'Parte']]
         .map(([k, t]) => h('option', { value: k, selected: S.grupo === k }, t)))),
     h('label', { class: 'campo' }, 'Ordenar por', h('select', { onchange: (ev) => { S.orden = ev.target.value; pintarTabla(); } },
-            [['prioridad', 'Prioridad'], ['limite', 'Días al límite de fill rate'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['edadDespacho', 'Edad al despacho (mayor primero)'], ['tienda', 'Tienda']]
+      [['prioridad', 'Prioridad'], ['limite', 'Días al límite de fill rate'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['edadDespacho', 'Edad al despacho (mayor primero)'], ['tienda', 'Tienda']]
         .map(([k, t]) => h('option', { value: k, selected: S.orden === k }, t)))),
     h('span', { class: 'separa' }),
-    h('a', { class: 'btn sec', href: '/api/export/cases.csv' }, 'Exportar CSV'),
+    S.me.ver_precios ? h('a', { class: 'btn sec', href: '/api/export/cases.csv' }, 'Exportar CSV') : null,
   ));
   v.append(h('p', { class: 'resumen', id: 'resumen' }));
   v.append(h('div', { class: 'leyenda' },
@@ -248,7 +252,8 @@ function filaCaso(c) {
     c.responsable ? h('span', { class: 'sub' }, c.responsable) : null),
   h('td', { class: 'tienda' }, c.list_name),
   h('td', {}, h('span', { class: 'parte' }, c.assembly), h('span', { class: 'sub desc', title: c.description || '' }, c.description)),
-  h('td', {}, h('span', { class: `etiqueta${c.option_short === 'OH' ? ' oh' : ''}` }, c.option_short)),
+  h('td', {}, h('span', { class: `etiqueta${c.option_short === 'OH' ? ' oh' : ''}` }, c.option_short),
+    c.compra_miami ? h('span', { class: 'sub' }, `Miami comprada ${fecha(c.compra_miami.fecha_compra)}`) : null),
   h('td', { class: 'fecha' }, fecha(c.eta_jenny),
   h('span', { class: `sub${dias !== null && dias < 0 ? ' dias-neg' : ''}` }, dias === null ? '' : dias === 0 ? 'hoy' : dias > 0 ? `en ${dias} d` : `hace ${-dias} d`)),
   h('td', {}, carril(c)),
@@ -265,7 +270,7 @@ function pintarTabla() {
   const valor = lista.reduce((s, c) => s + (c.pendiente && c.precio ? c.precio : 0), 0);
   const res = vaciar($('#resumen'));
   res.append(h('b', {}, lista.length), ` líneas de ${S.casos.length}`, ' | ', h('b', {}, rojas), ' con alerta roja',
-    ' | ', h('b', {}, new Set(lista.map((c) => c.notifctn)).size), ' reparaciones', ' | valor pendiente ', h('b', {}, dinero(valor, lista[0]?.moneda)),
+    ' | ', h('b', {}, new Set(lista.map((c) => c.notifctn)).size), ' reparaciones', ...(S.me.ver_precios ? [' | valor pendiente ', h('b', {}, dinero(valor, lista[0]?.moneda))] : []),
     S.kgbFecha ? ` | KGB del ${fecha(S.kgbFecha)}` : ' | sin KGB cargado');
   const marco = vaciar($('#marco'));
   if (!S.casos.length) {
@@ -331,7 +336,7 @@ async function abrirDetalle(key) {
       c.alerts.map((a) => h('div', { class: `alerta ${a.level}` }, a.text))));
   }
 
-    panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Fechas'), h('dl', { class: 'datos' },
+  panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Fechas'), h('dl', { class: 'datos' },
     dato('ETA de Apple', fechaLarga(c.eta_jenny), c.eta_changes ? ` (inicial ${fechaLarga(c.eta_first)}, ${c.eta_changes} cambio${c.eta_changes > 1 ? 's' : ''})` : ''),
     dato('Llegada', fechaLarga(c.llegada), ` (${c.llegada_fuente})`),
     dato(c.fecha_despacho ? 'Despachado' : 'Despacho posible', fechaLarga(c.despacho_posible)),
@@ -382,6 +387,7 @@ async function abrirDetalle(key) {
         h('td', {}, fecha(r.edd)), h('td', {}, r.current_event || r.status), h('td', {}, r.sla_ind))))) : null,
     det.kgb_parte ? h('p', { class: 'nota' }, `Esta parte en todo el KGB: ${det.kgb_parte.qty} unidades, primera llegada ${fechaLarga(det.kgb_parte.edd)}${det.kgb_parte.guides.length ? `, guías ${det.kgb_parte.guides.join(', ')}` : ''}.`) : null));
   panel.append(bloqueAbastecimiento(c));
+  if (S.me.ver_miami) panel.append(bloqueMiami(c));
 
   panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Datos de Apple (solo lectura)'), h('dl', { class: 'datos' },
     dato('Solución', c.option_jenny || '—'),
@@ -392,7 +398,7 @@ async function abrirDetalle(key) {
     dato('Sustituto oficial', c.sustituto_pd || 'No tiene (Parts Data)'),
     dato('Equipo', c.product_description || c.material_desc || '—'),
     dato('Garantía', `${c.warranty || '—'} (${c.tipo_precio})`),
-    dato('Valor (stocking)', dinero(c.precio, c.moneda)),
+    S.me.ver_precios ? dato('Valor (stocking)', dinero(c.precio, c.moneda)) : null,
     c.precio !== null ? dato('Paga la tienda', c.precio_tienda === null ? 'Sin precio exchange' : dinero(c.precio_tienda, c.moneda)) : null,
     c.precio !== null ? dato('Paga Apple', c.precio_apple === null ? '—' : dinero(c.precio_apple, c.moneda)) : null,
     Object.keys(c.precios_especiales).length ? dato('Precios por tipo de reparación', Object.entries(c.precios_especiales)
@@ -404,16 +410,20 @@ async function abrirDetalle(key) {
     dato('En el reporte desde', fechaLarga(c.first_seen)),
   )));
 
-  const texto = h('textarea', { maxlength: 2000, placeholder: 'Cómo se está solucionando este caso…' });
-  panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Comentarios'),
-    editable ? [texto, h('div', { class: 'acciones' }, h('button', {
+  const esAcm = S.me.role === 'acm';
+  const texto = h('textarea', { maxlength: 2000, placeholder: esAcm ? 'Nota para el equipo de Ingram…' : 'Cómo se está solucionando este caso…' });
+  const vis = h('select', { class: 'solo', title: 'Quién puede leer este comentario' },
+    h('option', { value: 'interno' }, 'Interno (solo el equipo)'), h('option', { value: 'compartido' }, 'Compartido con Apple'));
+  panel.append(h('div', { class: 'bloque' }, h('h3', {}, esAcm ? 'Notas' : 'Comentarios'),
+    S.me.puede_comentar ? [texto, h('div', { class: 'acciones' }, esAcm ? null : vis, h('button', {
       class: 'btn sec', type: 'button', onclick: intentar(async () => {
         if (!texto.value.trim()) return;
-        await api('POST', `/api/cases/${encodeURIComponent(key)}/comments`, { text: texto.value });
-        aviso('Comentario agregado.'); abrirDetalle(key);
+        await api('POST', `/api/cases/${encodeURIComponent(key)}/comments`, { text: texto.value, visibilidad: vis.value });
+        aviso(esAcm ? 'Nota agregada.' : 'Comentario agregado.'); abrirDetalle(key);
       }),
-    }, 'Agregar comentario'))] : null,
-    det.comentarios.length ? det.comentarios.map((m) => h('div', { class: 'comentario' }, h('small', {}, `${m.username}, ${m.at.replace('T', ' ')}`), m.text))
+    }, esAcm ? 'Agregar nota' : 'Agregar comentario'))] : null,
+    det.comentarios.length ? det.comentarios.map((m) => h('div', { class: 'comentario' }, h('small', {}, `${m.username}, ${m.at.replace('T', ' ')}`,
+      esAcm ? null : h('span', { class: `vis ${m.visibilidad}` }, m.visibilidad === 'compartido' ? 'Compartido con Apple' : 'Interno')), m.text))
       : h('p', { class: 'nota' }, 'Sin comentarios todavía.')));
 
   const hist = [
@@ -538,7 +548,7 @@ async function pintarIndicadores() {
     cifra(fr.valor === null ? '—' : `${fr.valor}%`, fr.valor === null ? 'Fill rate backlog: registre fechas de despacho para calcularlo' : `Fill rate backlog (${fr.a_tiempo} de ${fr.evaluadas} líneas a tiempo)`, 'principal'),
     cifra(k.proyeccion.en_riesgo, `en riesgo de ${k.proyeccion.vencen_7d} que vencen en 7 días`, k.proyeccion.en_riesgo ? 'alerta-cifra' : ''),
     cifra(k.pendientes_despacho, `líneas por despachar (${k.reparaciones} reparaciones)`),
-    cifra(dinero(k.valor.total, k.moneda), k.valor.sin_precio ? `valor pendiente (${k.valor.sin_precio} líneas sin precio)` : 'valor pendiente'),
+    S.me.ver_precios ? cifra(dinero(k.valor.total, k.moneda), k.valor.sin_precio ? `valor pendiente (${k.valor.sin_precio} líneas sin precio)` : 'valor pendiente') : null,
     cifra(k.oh.total, `OH por despachar (${k.oh.demorados} demorados)`, k.oh.demorados ? 'alerta-cifra' : ''),
     cifra(k.kam.pendientes, k.kam.dias_prom === null ? 'esperando al Apple Care Manager' : `esperando al Apple Care Manager (${k.kam.dias_prom} días prom.)`),
   ));
@@ -675,6 +685,7 @@ async function pintarPartes() {
     if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: 10, class: 'vacio' }, 'Ninguna parte coincide.')));
   }
   filas();
+  if (S.me.ver_miami) v.append(await panelMiami());
 }
 
 async function pintarDetalleParte(parte, celda) {
@@ -734,6 +745,175 @@ async function panelKgbColombia() {
         h('td', { class: 'num' }, x.unid ? `${unid(x.unid_co)} de ${unid(x.unid)}` : '—'), h('td', { class: 'num' }, pct1(x.pct_unid)),
         h('td', { class: 'num' }, x.var_unid === undefined || x.var_unid === null ? '—' : variacion(x.var_unid)),
         h('td', { class: 'num' }, x.guias ? `${x.guias_co} de ${x.guias}` : (x.guias_co ?? '—')))))) : null);
+}
+
+// ------------------------------------------------------------------ compras en Miami (bloque B3)
+function bloqueMiami(c) {
+  const caja = h('div', { class: 'bloque' }, h('h3', {}, 'Compra en Miami'));
+  const recargar = async (msg) => { aviso(msg); await cargarCasos(); pintarTabla(); abrirDetalle(c.key_notif); };
+  intentar(async () => {
+    const r = await api('GET', `/api/cases/${encodeURIComponent(c.key_notif)}/miami`);
+    const activa = r.compras.find((x) => x.estado === 'Comprada');
+    const editable = puedeEditar();
+    if (activa) {
+      caja.append(h('dl', { class: 'datos' },
+        dato('Comprada', `${fechaLarga(activa.fecha_compra)} (registró ${activa.username || '—'})`),
+        dato('Parte y cantidad', `${activa.part} × ${activa.cantidad}`),
+        dato('PO o referencia', activa.po || '—'),
+        dato('Llegada esperada', fechaLarga(activa.eta)),
+        activa.notas ? dato('Notas', activa.notas) : null));
+      if (editable) {
+        const fRec = h('input', { type: 'date', class: 'solo', value: hoyISO() });
+        const eta = h('input', { type: 'date', class: 'solo', value: activa.eta || '' });
+        const motivo = h('input', { class: 'solo', placeholder: 'Motivo (ej. llegó por el KGB)', maxlength: 300, size: 28 });
+        caja.append(
+          h('div', { class: 'acciones' }, fRec, h('button', { class: 'btn', type: 'button', onclick: intentar(async () => {
+            await api('PATCH', `/api/miami/${activa.id}`, { accion: 'recibida', fecha: fRec.value });
+            await recargar('Compra recibida. Se registró la recepción del caso.');
+          }) }, 'Marcar recibida')),
+          h('div', { class: 'acciones' }, eta, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+            await api('PATCH', `/api/miami/${activa.id}`, { accion: 'editar', eta: eta.value });
+            await recargar('Llegada esperada actualizada.');
+          }) }, 'Cambiar llegada')),
+          h('div', { class: 'acciones' }, motivo, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+            if (!motivo.value.trim()) { aviso('Indique el motivo de la cancelación.', true); return; }
+            await api('PATCH', `/api/miami/${activa.id}`, { accion: 'cancelada', motivo: motivo.value });
+            await recargar('Compra cancelada.');
+          }) }, 'Cancelar compra')));
+      }
+    } else if (editable) {
+      const g = {
+        fecha_compra: h('input', { type: 'date', value: hoyISO() }), cantidad: h('input', { type: 'number', min: 1, max: 999, value: 1 }),
+        part: h('input', { value: c.assembly || '', maxlength: 40 }), po: h('input', { maxlength: 60 }),
+        eta: h('input', { type: 'date' }), notas: h('input', { maxlength: 500 }),
+      };
+      caja.append(h('p', { class: 'nota' }, c.option_jenny === 'Miami' ? 'Jenny indicó Miami y no hay compra registrada.' : 'Sin compra en Miami.',
+        ` Si deja la llegada vacía, se calcula como la compra + ${r.lead_dias} días.`),
+      h('div', { class: 'form' },
+        h('label', { class: 'campo' }, 'Fecha de compra', g.fecha_compra), h('label', { class: 'campo' }, 'Cantidad', g.cantidad),
+        h('label', { class: 'campo' }, 'Parte comprada', g.part), h('label', { class: 'campo' }, 'PO o referencia', g.po),
+        h('label', { class: 'campo' }, 'Llegada esperada (opcional)', g.eta), h('label', { class: 'campo' }, 'Notas', g.notas)),
+      h('div', { class: 'acciones' }, h('button', { class: 'btn', type: 'button', onclick: intentar(async () => {
+        const body = { fecha_compra: g.fecha_compra.value, cantidad: Number(g.cantidad.value) || 1, part: g.part.value,
+          po: g.po.value, eta: g.eta.value || null, notas: g.notas.value };
+        const res = await api('POST', `/api/cases/${encodeURIComponent(c.key_notif)}/miami`, body);
+        await recargar(`Compra registrada. Llegada esperada: ${fechaLarga(res.eta)}.`);
+      }) }, 'Registrar compra')));
+    } else {
+      caja.append(h('p', { class: 'nota' }, 'Sin compra en Miami registrada.'));
+    }
+    const cerradas = r.compras.filter((x) => x.estado !== 'Comprada');
+    if (cerradas.length) {
+      caja.append(h('p', { class: 'nota' }, 'Anteriores: ', cerradas.map((x) => `${x.estado} el ${fechaLarga(x.fecha_estado)}${x.motivo ? ` (${x.motivo})` : ''}, comprada el ${fechaLarga(x.fecha_compra)}${x.po ? `, PO ${x.po}` : ''}`).join(' · ')));
+    }
+  })();
+  return caja;
+}
+
+async function panelMiami() {
+  const r = await api('GET', `/api/miami?todas=${S.mTodas ? 1 : 0}`);
+  const res = r.resumen;
+  const cifra = (valor, label, cls) => h('div', { class: `cifra${cls ? ` ${cls}` : ''}` }, h('b', {}, valor), h('span', {}, label));
+  const todas = h('input', { type: 'checkbox', checked: !!S.mTodas, onchange: intentar(async (ev) => { S.mTodas = ev.target.checked; await pintarPartes(); }) });
+  return h('div', { class: 'panel' }, h('h2', {}, 'Compras en Miami'),
+    h('p', {}, `Se registran en el detalle de cada caso. Si no se indica la llegada, es la compra + ${r.lead_dias} días (Administración). `,
+      '"Apple lo trae antes" sale cuando lo que viene en el KGB o en Open Orders alcanza a despacharse dentro del límite de fill rate, o llega antes que Miami.'),
+    h('div', { class: 'tira' },
+      cifra(res.activas, 'compras activas'),
+      cifra(res.evaluar, 'para evaluar cancelar: Apple lo trae antes', res.evaluar ? 'alerta-cifra' : ''),
+      cifra(res.atrasadas, 'atrasadas: pasó la llegada esperada', res.atrasadas ? 'alerta-cifra' : ''),
+      cifra(res.miami_sin_compra, 'casos Miami sin compra registrada')),
+    h('label', { class: 'check' }, todas, 'Incluir recibidas y canceladas'),
+    r.compras.length ? h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Parte', 'Cant.', 'Comprada', 'PO', 'Llegada esperada', 'Límite', 'Estado', 'Alerta'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, r.compras.map((x) => h('tr', {},
+        h('td', {}, h('button', { class: 'btn sec', type: 'button', title: 'Abrir el caso', onclick: () => { S.f.q = x.key_notif; S.sel = x.key_notif; mostrar('casos'); } }, x.key_notif)),
+        h('td', {}, x.tienda || '—'), h('td', {}, x.part), h('td', { class: 'num' }, x.cantidad),
+        h('td', { class: 'fecha' }, fecha(x.fecha_compra)), h('td', {}, x.po || '—'), h('td', { class: 'fecha' }, fecha(x.eta)),
+        h('td', { class: 'fecha' }, fecha(x.limite_fr)), h('td', {}, x.estado, x.caso_abierto ? null : h('span', { class: 'sub' }, 'El caso ya salió del reporte'),
+          x.motivo ? h('span', { class: 'sub' }, x.motivo) : null),
+        h('td', {}, x.alertas.map((a) => h('div', { class: `alerta ${a.level}` }, a.text)))))))
+      : h('p', { class: 'nota' }, 'Todavía no hay compras en Miami registradas.'));
+}
+
+// ------------------------------------------------------------------ vista de tienda y tiendas por usuario
+const ESTADO_TIENDA = {
+  'En bodega, por despachar': 'El repuesto ya está en nuestra bodega; la fecha es el despacho estimado.',
+  'En proceso': 'El repuesto viene en camino; la fecha es tentativa (ETA de Apple) y puede cambiar.',
+  'En gestión': 'Aún no tenemos una fecha confiable; le informaremos apenas la tengamos.',
+  Despachado: 'Despachado en los últimos días.',
+};
+
+async function pintarTienda(preview, destino) {
+  const v = vaciar(destino || $('#v-tienda'));
+  const r = await api('GET', `/api/tienda/casos${preview ? `?ship_to=${encodeURIComponent(preview)}` : ''}`);
+  const cifra = (valor, label) => h('div', { class: 'cifra' }, h('b', {}, valor), h('span', {}, label));
+  v.append(h('div', { class: 'panel' }, h('h2', {}, 'Estado de sus casos de repuesto'),
+    h('p', {}, r.tiendas.length ? `${r.tiendas.map((t) => t.nombre).join(', ')}. Información según el reporte del ${fecha(r.actualizado)}.`
+      : 'Su usuario todavía no tiene tiendas asignadas. Escríbanos para habilitarlo.'),
+    h('dl', { class: 'datos' }, Object.entries(ESTADO_TIENDA).map(([k, t]) => dato(k, k === 'Despachado' ? `Despachado en los últimos ${r.dias_despachados} días.` : t)))));
+  if (!r.tiendas.length) return;
+  v.append(h('div', { class: 'tira' }, Object.keys(ESTADO_TIENDA).map((k) => cifra(r.resumen[k] || 0, k))));
+  const varias = r.tiendas.length > 1;
+  const buscar = h('input', { type: 'search', placeholder: 'Notificación, repuesto o equipo', oninput: () => filas() });
+  const tienda = varias ? h('select', { onchange: () => filas() }, h('option', { value: '' }, 'Todas'),
+    r.tiendas.map((t) => h('option', { value: t.ship_to }, t.nombre))) : null;
+  const cuerpo = h('tbody'); const res = h('p', { class: 'resumen' });
+  v.append(h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Buscar', buscar), varias ? h('label', { class: 'campo' }, 'Tienda', tienda) : null), res,
+    h('div', { class: 'marco' }, h('table', {}, h('thead', {}, h('tr', {},
+      ['Notificación', varias ? 'Tienda' : null, 'Repuesto', 'Equipo', 'Creado', 'Estado', 'Fecha'].filter(Boolean).map((t) => h('th', {}, t)))), cuerpo)));
+  function filas() {
+    const q = buscar.value.trim().toLowerCase(); const st = tienda ? tienda.value : '';
+    const lista = r.casos.filter((x) => (!st || x.ship_to === st)
+      && (!q || `${x.notificacion} ${x.parte} ${x.descripcion || ''} ${x.equipo || ''}`.toLowerCase().includes(q)));
+    vaciar(res).append(h('b', {}, lista.length), ` de ${r.casos.length} casos`);
+    vaciar(cuerpo).append(...lista.map((x) => h('tr', {},
+      h('td', {}, h('span', { class: 'caso' }, x.notificacion)),
+      varias ? h('td', { class: 'tienda' }, x.tienda) : null,
+      h('td', {}, h('span', { class: 'parte' }, x.parte), h('span', { class: 'sub desc' }, x.descripcion)),
+      h('td', {}, x.equipo || '—'), h('td', { class: 'fecha' }, fecha(x.creado)),
+      h('td', {}, h('span', { class: `etiqueta${x.estado === 'Despachado' ? ' despachado' : ''}` }, x.estado)),
+      h('td', { class: 'fecha' }, x.fecha ? fecha(x.fecha) : '—', x.fecha_tipo ? h('span', { class: 'sub' }, x.fecha_tipo) : null))));
+    if (!lista.length) cuerpo.append(h('tr', {}, h('td', { colspan: 7, class: 'vacio' }, 'Ningún caso coincide.')));
+  }
+  filas();
+}
+
+async function panelTiendasUsuarios(usuarios) {
+  const { tiendas } = await api('GET', '/api/tiendas-disponibles');
+  const caja = h('div', { class: 'panel' }, h('h2', {}, 'Tiendas de cada usuario'),
+    h('p', {}, 'Un usuario con rol "tienda" solo ve los casos de los ship-to que se le asignen aquí. El ship-to es el código del backlog: cuando el backlog pase a Ingram (2 de noviembre) hay que revisar estas asignaciones.'));
+  const deTienda = usuarios.filter((u) => u.role === 'tienda');
+  if (!deTienda.length) caja.append(h('p', { class: 'nota' }, 'No hay usuarios con rol tienda. Créelos arriba con el rol "tienda".'));
+  for (const u of deTienda) {
+    const marcado = new Set((await api('GET', `/api/users/${u.id}/tiendas`)).ship_tos);
+    const resumen = h('span', { class: 'sub' });
+    const pintarResumen = () => {
+      resumen.textContent = marcado.size ? tiendas.filter((t) => marcado.has(t.ship_to)).map((t) => t.nombre).join(', ') || `${marcado.size} ship-to` : 'Sin tiendas asignadas';
+    };
+    const filtro = h('input', { type: 'search', class: 'solo', placeholder: 'Filtrar tiendas' });
+    const lista = h('div', { class: 'lista-tiendas' }, tiendas.map((t) => h('label', { class: 'check', dataset: { buscar: `${t.nombre} ${t.ship_to}`.toLowerCase() } },
+      h('input', { type: 'checkbox', checked: marcado.has(t.ship_to), onchange: (ev) => { if (ev.target.checked) marcado.add(t.ship_to); else marcado.delete(t.ship_to); } }),
+      `${t.nombre} (${t.ship_to})${t.abiertos ? `, ${t.abiertos} abiertos` : ''}`)));
+    filtro.addEventListener('input', () => {
+      const q = filtro.value.trim().toLowerCase();
+      lista.querySelectorAll('label').forEach((l) => { l.hidden = !!q && !l.dataset.buscar.includes(q); });
+    });
+    const editor = h('div', { class: 'editor-tiendas', hidden: true }, filtro, lista, h('div', { class: 'acciones' }, h('button', {
+      class: 'btn', type: 'button', onclick: intentar(async () => {
+        await api('PUT', `/api/users/${u.id}/tiendas`, { ship_tos: [...marcado] }); pintarResumen(); editor.hidden = true; aviso('Tiendas guardadas.');
+      }),
+    }, 'Guardar tiendas')));
+    pintarResumen();
+    caja.append(h('div', { class: 'usuario-tienda' }, h('b', {}, u.username), resumen,
+      h('button', { class: 'btn sec', type: 'button', onclick: () => { editor.hidden = !editor.hidden; } }, 'Editar tiendas'), editor));
+  }
+  const sel = h('select', { class: 'solo' }, tiendas.map((t) => h('option', { value: t.ship_to }, `${t.nombre} (${t.ship_to})`)));
+  const previa = h('div');
+  caja.append(h('h2', { class: 'separado' }, 'Vista previa'), h('p', { class: 'nota' }, 'Así ve una tienda sus casos.'),
+    h('div', { class: 'barra' }, sel, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => { await pintarTienda(sel.value, previa); }) }, 'Ver como esa tienda')),
+    previa);
+  return caja;
 }
 
 // ------------------------------------------------------------------ cargas
@@ -800,7 +980,7 @@ async function pintarAdmin() {
   const nu = { username: h('input', { maxlength: 64 }), full_name: h('input', { maxlength: 120 }),
     role: h('select', {}, S.me.roles.map((r) => h('option', { value: r, selected: r === 'editor' }, r))), password: h('input', { type: 'password', autocomplete: 'new-password' }) };
   v.append(h('div', { class: 'panel' }, h('h2', {}, 'Usuarios'),
-    h('p', {}, 'Administrador: todo. Editor: gestiona casos, guías, correos y cargas. Lector: solo consulta. Las contraseñas nuevas o restablecidas obligan a cambiarlas en el siguiente ingreso.'),
+    h('p', {}, 'Administrador: todo. Editor: gestiona casos, guías, correos y cargas. Lector: solo consulta. Apple Care Manager (acm): ve casos, abastecimiento e indicadores sin precios ni compras en Miami, no edita y deja notas. Tienda: solo ve sus casos. Las contraseñas nuevas o restablecidas obligan a cambiarlas en el siguiente ingreso.'),
     h('table', { class: 'mini' }, h('thead', {}, h('tr', {}, ['Usuario', 'Nombre', 'Rol', 'Activo', 'Estado', ''].map((t) => h('th', {}, t)))),
       h('tbody', {}, usuarios.map((u) => {
         const rol = h('select', { class: 'solo', onchange: intentar(async (ev) => { await api('PATCH', `/api/users/${u.id}`, { role: ev.target.value }); aviso('Rol actualizado.'); }) },
@@ -822,6 +1002,7 @@ async function pintarAdmin() {
         await api('POST', '/api/users', { username: nu.username.value, full_name: nu.full_name.value, role: nu.role.value, password: nu.password.value });
         aviso('Usuario creado.'); pintarAdmin();
       }) }, 'Crear usuario'))));
+  v.append(await panelTiendasUsuarios(usuarios));
 
   const etiquetas = {
     kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia de fill rate (días después de la ETA)',
@@ -829,6 +1010,7 @@ async function pintarAdmin() {
     despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera del Apple Care Manager antes de alertar',
     oh_max_days: 'Días hábiles máximos de un OH sin despachar',
     oo_transit_days: 'Open Orders: días de Apple a Colombia después de la salida (Recovery ETA)',
+    miami_lead_days: 'Miami: días desde la compra hasta la llegada (por defecto)',
     email_transit_days: 'Correo: días hábiles de tránsito confirmado que también llevan fecha (0 = solo repuestos en bodega)', currency: 'Moneda de los precios', email_signature: 'Firma de los correos',
   };
   const inputs = {};
