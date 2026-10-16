@@ -92,7 +92,7 @@ def caso(user, c: dict) -> dict:
         return c
     c = dict(c)
     c.update(precio=None, precio_tienda=None, precio_apple=None, precios_especiales={}, compra_miami=None, inventario=None)
-    c["alerts"] = [a for a in c["alerts"] if not a["code"].startswith(("MIAMI_", "INV_"))]
+    c["alerts"] = [a for a in c["alerts"] if not a["code"].startswith(("MIAMI_", "INV_", "NOTA_ACM"))]
     niveles = {a["level"] for a in c["alerts"]}
     c["nivel"] = "rojo" if "rojo" in niveles else "ambar" if "ambar" in niveles else "info" if "info" in niveles else "ok"
     if c.get("llegada_fuente") in ("Compra Miami", "Inventario propio"):
@@ -101,9 +101,13 @@ def caso(user, c: dict) -> dict:
 
 
 def comentarios(conn, user, key) -> list:
-    sql = "SELECT username, at, text, visibilidad FROM comments WHERE key_notif=?"
     if user["role"] == "acm":
-        sql += " AND visibilidad='compartido'"
+        sql = "SELECT id, username, at, text, visibilidad FROM comments WHERE key_notif=? AND visibilidad='compartido'"
+    else:
+        sql = """SELECT m.id, m.username, m.at, m.text, m.visibilidad, u.role autor_rol, l.username leida_por, l.at leida_at
+                 FROM comments m LEFT JOIN users u ON u.id = m.user_id LEFT JOIN notas_leidas l ON l.comment_id = m.id
+                 WHERE m.key_notif=?"""
+        return [dict(r) for r in conn.execute(sql + " ORDER BY m.id DESC", (key,))]
     return [dict(r) for r in conn.execute(sql + " ORDER BY id DESC", (key,))]
 
 

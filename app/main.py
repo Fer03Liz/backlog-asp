@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import abastecimiento, acceso, config, db, ingest, inventario, logic, miami, security, tiendas
+from . import abastecimiento, acceso, config, db, gestion, ingest, inventario, logic, miami, security, tiendas
 
 app = FastAPI(title="Backlog ASP", docs_url=None, redoc_url=None, openapi_url=None)
 db.init_db()
@@ -21,6 +21,7 @@ miami.init_db()
 acceso.init_db()
 tiendas.init_db()
 inventario.init_db()
+gestion.init_db()
 
 CSP = ("default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; "
        "connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; "
@@ -209,6 +210,7 @@ def case_detail(key: str, user=Depends(current_user), conn=Depends(get_db)):
         "historial": [dict(r) for r in conn.execute(
             "SELECT file_date, field, old, new FROM case_history WHERE key_notif=? ORDER BY id DESC", (key,))],
         "comentarios": acceso.comentarios(conn, user, key),
+        "solicitudes": gestion.solicitudes(conn, key=key) if user["role"] in acceso.INTERNOS else [],
         "gestion": acceso.gestion(user, [dict(r) for r in conn.execute(
             "SELECT at, username, detail FROM audit_log WHERE target=? AND action='case_update' ORDER BY id DESC LIMIT 50", (key,))]),
         "kgb_guia": [{k: r[k] for k in ("tracking", "prod_id", "prod_desc", "qty", "edd", "current_event", "sla_ind", "status")}
@@ -230,48 +232,13 @@ class CaseUpdate(BaseModel):
 
 @app.patch("/api/cases/{key}")
 def update_case(key: str, body: CaseUpdate, user=Depends(EDITORS), conn=Depends(get_db)):
-    row = conn.execute("SELECT * FROM cases WHERE key_notif=?", (key,)).fetchone()
-    if not row:
-        raise HTTPException(404, "Caso no encontrado.")
-    old = dict(row)
-    changes = body.model_dump(exclude_unset=True)
-    if "estado" in changes and changes["estado"] not in config.ESTADOS:
-        raise HTTPException(422, "Estado no válido.")
-    if "aprobacion_kam" in changes and changes["aprobacion_kam"] not in config.APROBACION_KAM:
-        raise HTTPException(422, "Valor de aprobación no válido.")
-    if "propuesta" in changes and (changes["propuesta"] or "") not in config.PROPUESTAS:
-        raise HTTPException(422, "Propuesta no válida.")
-    for f in ("fecha_recepcion", "fecha_despacho", "fecha_objetivo"):
-        if f in changes:
-            changes[f] = _date_or_none(changes[f], f)
-    if "responsable" in changes:
-        changes["responsable"] = (changes["responsable"] or "").strip() or None
-    if "propuesta" in changes:
-        changes["propuesta"] = changes["propuesta"] or None
-
-    today = logic.today().isoformat()
-    if changes.get("estado") == "Despachado" and not (changes.get("fecha_despacho") or old["fecha_despacho"]):
-        changes["fecha_despacho"] = today
-    if changes.get("estado") == "Recibido" and not (changes.get("fecha_recepcion") or old["fecha_recepcion"]):
-        changes["fecha_recepcion"] = today
-    if changes.get("fecha_despacho") and "estado" not in changes:
-        changes["estado"] = "Despachado"
-    if changes.get("estado") == "Pendiente aprobación ACM" and "aprobacion_kam" not in changes:
-        changes["aprobacion_kam"] = "Pendiente"
-    if "aprobacion_kam" in changes and changes["aprobacion_kam"] != old["aprobacion_kam"]:
-        if changes["aprobacion_kam"] == "Pendiente":
-            changes["kam_solicitado"], changes["kam_respuesta"] = today, None
-        elif changes["aprobacion_kam"] in ("Aprobada", "Rechazada"):
-            changes["kam_respuesta"] = today
-
-    diff = {k: {"antes": old[k], "ahora": v} for k, v in changes.items() if old[k] != v}
-    if not diff:
-        return {"ok": True, "cambios": 0}
-    sets = {k: v["ahora"] for k, v in diff.items()} | {"updated_at": db.now_iso()}
-    conn.execute(f"UPDATE cases SET {', '.join(f'{k}=?' for k in sets)} WHERE key_notif=?", [*sets.values(), key])
-    db.audit(conn, user, "case_update", key, diff)
+    try:
+        n = gestion.cambiar_caso(conn, user, key, body.model_dump(exclude_unset=True))
+    except gestion.GestionError as exc:
+        conn.rollback()
+        raise HTTPException(exc.status, str(exc))
     conn.commit()
-    return {"ok": True, "cambios": len(diff)}
+    return {"ok": True, "cambios": n}
 
 
 class CommentIn(BaseModel):
@@ -346,6 +313,10 @@ def guide_arrival(tracking: str, body: ArrivalIn, user=Depends(EDITORS), conn=De
     keys = [r for r in rows if tracking in json.loads(r["tracking"] or "[]")]
     if not keys:
         raise HTTPException(404, "No hay casos abiertos con esa guía.")
+    previa = conn.execute("SELECT arrived_on FROM guide_arrivals WHERE tracking=?", (tracking,)).fetchone()
+    if previa and previa["arrived_on"] != fecha and user["role"] != "admin":
+        raise HTTPException(403, f"La llegada de esta guía ya está registrada ({previa['arrived_on']}). "
+                                 "Para cambiarla, pídalo a un administrador con el motivo.")
     conn.execute("INSERT OR REPLACE INTO guide_arrivals(tracking, arrived_on, user_id, at) VALUES(?,?,?,?)",
                  (tracking, fecha, user["id"], db.now_iso()))
     updated = 0
@@ -364,6 +335,96 @@ def guide_arrival(tracking: str, body: ArrivalIn, user=Depends(EDITORS), conn=De
     db.audit(conn, user, "guide_arrival", tracking, {"fecha": fecha, "casos": len(keys)})
     conn.commit()
     return {"ok": True, "casos": len(keys), "actualizados": updated}
+
+
+# ---------------------------------------------------------------- solicitudes, avisos y selección múltiple
+INTERNOS = require("admin", "editor", "lector")
+
+
+def _g(fn):
+    try:
+        return fn()
+    except gestion.GestionError as exc:
+        raise HTTPException(exc.status, str(exc))
+
+
+class SolicitudIn(BaseModel):
+    campo: str
+    valor_nuevo: str | None = None
+    motivo: str = Field(max_length=500)
+
+
+@app.post("/api/cases/{key}/solicitudes")
+def solicitud_crear(key: str, body: SolicitudIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    sid = _g(lambda: gestion.solicitar(conn, user, key, body.campo, body.valor_nuevo, body.motivo))
+    conn.commit()
+    return {"ok": True, "id": sid}
+
+
+@app.get("/api/solicitudes")
+def solicitud_lista(estado: str | None = None, user=Depends(INTERNOS), conn=Depends(get_db)):
+    return gestion.solicitudes(conn, estado)
+
+
+class ResolverIn(BaseModel):
+    aprobar: bool
+    respuesta: str | None = Field(None, max_length=500)
+
+
+@app.post("/api/solicitudes/{sid}/resolver")
+def solicitud_resolver(sid: int, body: ResolverIn, user=Depends(ADMINS), conn=Depends(get_db)):
+    _g(lambda: gestion.resolver(conn, user, sid, body.aprobar, body.respuesta))
+    conn.commit()
+    return {"ok": True}
+
+
+@app.get("/api/avisos")
+def avisos(user=Depends(INTERNOS), conn=Depends(get_db)):
+    return gestion.avisos(conn, user)
+
+
+class LeidasIn(BaseModel):
+    ids: list[int] | None = None
+    key: str | None = None
+
+
+@app.post("/api/avisos/leidas")
+def avisos_leidas(body: LeidasIn, user=Depends(INTERNOS), conn=Depends(get_db)):
+    n = gestion.marcar_leidas(conn, user, body.ids, body.key)
+    conn.commit()
+    return {"ok": True, "marcadas": n}
+
+
+class LoteIn(BaseModel):
+    keys: list[str] = Field(max_length=2000)
+    cambios: dict = {}
+    comentario: str | None = Field(None, max_length=2000)
+    visibilidad: str = "interno"
+
+
+@app.post("/api/lote/vista-previa")
+def lote_vista_previa(body: LoteIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    return _g(lambda: gestion.lote_vista_previa(conn, user, body.keys, body.cambios, body.comentario))
+
+
+@app.post("/api/lote")
+def lote_aplicar(body: LoteIn, user=Depends(EDITORS), conn=Depends(get_db)):
+    _g(lambda: gestion.lote_vista_previa(conn, user, body.keys, body.cambios, body.comentario))
+    r = _g(lambda: gestion.lote_aplicar(conn, user, body.keys, body.cambios, body.comentario, body.visibilidad))
+    conn.commit()
+    return {"ok": True, **r}
+
+
+@app.get("/api/lotes")
+def lotes(user=Depends(EDITORS), conn=Depends(get_db)):
+    return gestion.lotes_del_dia(conn, user)
+
+
+@app.post("/api/lote/{lid}/deshacer")
+def lote_deshacer(lid: int, user=Depends(EDITORS), conn=Depends(get_db)):
+    r = _g(lambda: gestion.lote_deshacer(conn, user, lid))
+    conn.commit()
+    return {"ok": True, **r}
 
 
 # ---------------------------------------------------------------- correos

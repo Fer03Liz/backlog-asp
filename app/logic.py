@@ -177,6 +177,8 @@ class Context:
         from . import inventario, tiendas         # tiendas asociadas por nombre e inventario propio
         tiendas.cargar_contexto(self, conn)
         inventario.cargar_contexto(self, conn)
+        from . import gestion                     # notas de la ACM sin leer
+        gestion.cargar_contexto(self, conn)
 
 
 def _alert(code, level, text):
@@ -266,11 +268,11 @@ def enrich(c: dict, ctx: Context) -> dict:
     alerts = []
     if pending:
         if limite and t > limite:
-            alerts.append(_alert("FUERA_FR", "rojo", f"Venció el plazo de fill rate (ETA + {ctx.tol} días) el {fmt(limite)}; despachar cuanto antes."))
+            alerts.append(_alert("FUERA_FR", "rojo", f"Venció el plazo (ETA + {ctx.tol} días) el {fmt(limite)}; despachar cuanto antes."))
         elif limite and despacho and despacho > limite:
-            alerts.append(_alert("RIESGO_FR", "rojo", f"El despacho posible ({fmt(despacho)}) queda después del límite de fill rate ({fmt(limite)})."))
+            alerts.append(_alert("RIESGO_FR", "rojo", f"El despacho posible ({fmt(despacho)}) queda después del límite (ETA + {ctx.tol} días: {fmt(limite)})."))
         elif limite and despacho and despacho == limite:
-            alerts.append(_alert("SIN_MARGEN", "ambar", f"Sin margen: el despacho posible ({fmt(despacho)}) es el último día del plazo de fill rate."))
+            alerts.append(_alert("SIN_MARGEN", "ambar", f"Sin margen: el despacho posible ({fmt(despacho)}) es el último día del plazo (ETA + {ctx.tol} días)."))
         if opt == "OH":
             since = d(c.get("oh_since")) or t
             if cal.business_days_between(since, t) > ctx.oh_max:
@@ -310,6 +312,7 @@ def enrich(c: dict, ctx: Context) -> dict:
         alerts.append(_alert("DESPACHADO_SIGUE", "info", "Despachado y sigue en el reporte; confirmar cierre con la tienda."))
     if c.get("reopened") and not closed:
         alerts.append(_alert("REABIERTO", "ambar", "El caso había salido del reporte y volvió a aparecer."))
+    alerts.extend(ctx.gestion_alertas(c, ctx))
 
     levels = {a["level"] for a in alerts}
     nivel = "rojo" if "rojo" in levels else "ambar" if "ambar" in levels else "info" if "info" in levels else "ok"
@@ -401,12 +404,14 @@ def kpis(conn, ctx: Context) -> dict:
         vals = [c["precio"] for c in rows if c["precio"] is not None]
         return {"total": round(sum(vals), 2), "con_precio": len(vals), "sin_precio": len(rows) - len(vals)}
 
-    # Fill rate: líneas cuyo límite (ETA + tolerancia) ya pasó en los últimos 30 días
+    # Fill rate: líneas cuya primera ETA de Apple ya pasó (últimos 30 días); a tiempo si se despacharon
+    # en esa ETA o antes. La primera ETA no se mueve aunque Apple la corra después.
     first = conn.execute("SELECT MIN(file_date) m FROM loads WHERE kind='backlog'").fetchone()["m"]
     start = max(t - timedelta(days=30), d(first)) if first else t - timedelta(days=30)
-    due = [c for c in all_rows if c["limite_fr"] and start <= d(c["limite_fr"]) < t]
+    meta = lambda c: d(c.get("eta_first") or c.get("eta_jenny"))
+    due = [c for c in all_rows if meta(c) and start <= meta(c) < t]
     with_date = [c for c in due if c["fecha_despacho"]]
-    on_time = [c for c in with_date if d(c["fecha_despacho"]) <= d(c["limite_fr"])]
+    on_time = [c for c in with_date if d(c["fecha_despacho"]) <= meta(c)]
     no_record = [c for c in due if not c["fecha_despacho"] and c["source_status"] == "cerrado"]
     late_open = [c for c in due if not c["fecha_despacho"] and c["source_status"] == "abierto"]
     fr_den = len(with_date) + len(late_open)
@@ -415,6 +420,13 @@ def kpis(conn, ctx: Context) -> dict:
         "valor": round(100 * len(on_time) / fr_den, 1) if fr_den and any_shipped else None,
         "a_tiempo": len(on_time), "evaluadas": fr_den, "sin_registro": len(no_record), "desde": iso(start),
     }
+
+    # Aging: edad promedio del backlog pendiente y días promedio de la creación al despacho (últimos 30 días)
+    edades = [c["edad"] for c in pend if c["edad"] is not None]
+    ciclos = [(d(c["fecha_despacho"]) - d(c["created_on"])).days for c in all_rows
+              if c["fecha_despacho"] and c["created_on"] and d(c["fecha_despacho"]) >= t - timedelta(days=30)]
+    aging = {"backlog_prom": round(sum(edades) / len(edades), 1) if edades else None, "backlog_lineas": len(edades),
+             "despacho_prom": round(sum(ciclos) / len(ciclos), 1) if ciclos else None, "despachadas_30d": len(ciclos)}
 
     # Proyección: lo que vence en los próximos 7 días
     horizon = t + timedelta(days=7)
@@ -511,6 +523,7 @@ def kpis(conn, ctx: Context) -> dict:
         "reparaciones": len({c["notifctn"] for c in pend}),
         "valor": val(pend),
         "fill_rate": fill_rate,
+        "aging": aging,
         "proyeccion": {"vencen_7d": len(upcoming), "en_riesgo": len(at_risk)},
         "flujo": flujo,
         "edad": buckets,

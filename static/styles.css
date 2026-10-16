@@ -249,3 +249,25 @@ body.sin-precios .c-precio { display: none; }
 .usuario-tienda .editor-tiendas { flex-basis: 100%; }
 .lista-tiendas { max-height: 260px; overflow: auto; columns: 2; border: 1px solid var(--linea); border-radius: var(--radio); padding: 6px 10px; margin: 8px 0; }
 .lista-tiendas .check { padding-bottom: 3px; break-inside: avoid; }
+
+/* ---------- avisos, selección múltiple y solicitudes */
+.campana { position: relative; }
+.usuario #campana { display: inline-flex; align-items: center; gap: 6px; }
+.cuenta-avisos { background: var(--ambar-fill); color: var(--tinta); border-radius: 9px; padding: 0 7px; font-weight: 700; font-size: 12px; }
+.avisos-panel { position: absolute; right: 0; top: calc(100% + 8px); width: 440px; max-height: 70vh; overflow: auto; z-index: 50;
+  background: var(--superficie); color: var(--tinta); border: 1px solid var(--linea); border-radius: var(--radio);
+  box-shadow: 0 8px 24px rgba(23, 33, 43, .18); padding: 10px 12px; white-space: normal; }
+.avisos-cab { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 6px 0; }
+.aviso-item { border-top: 1px solid var(--linea-suave); padding: 8px 0; }
+.aviso-item small { color: var(--grafito); }
+.aviso-item p { margin: 4px 0 6px; }
+th.sel, td.sel { width: 30px; text-align: center; }
+.lote { margin-bottom: 12px; border-left: 4px solid var(--cobalto); }
+.lote-cab { display: flex; gap: 10px; align-items: center; }
+.lote-form { margin: 8px 0; }
+.lote textarea, .solicitud-form textarea { width: 100%; min-height: 54px; }
+.lote-res { margin-top: 8px; }
+.solicitudes { grid-column: 1 / -1; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.solicitud-form { border: 1px solid var(--linea-suave); border-radius: var(--radio); padding: 8px; }
+.comentario.sin-leer { border-left: 3px solid var(--ambar-fill); padding-left: 8px; background: var(--ambar-suave); }
+.lote-form { grid-template-columns: repeat(4, minmax(0, 1fr)); }

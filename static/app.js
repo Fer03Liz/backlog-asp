@@ -4,7 +4,7 @@
 const S = {
   me: null, casos: [], hoy: null, kgbFecha: null, cargado: {},
   f: { q: '', opcion: '', tienda: '', estado: '', alerta: '', guia: '', superAsp: false, cerrados: false },
-  grupo: '', orden: 'prioridad', colapsados: new Set(), sel: null,
+  grupo: '', orden: 'prioridad', colapsados: new Set(), sel: null, selec: new Set(),
 };
 const puedeEditar = () => !!(S.me && S.me.puede_editar);
 
@@ -86,6 +86,7 @@ async function iniciar() {
   if (S.me.must_change_pw) return cambiarClave(true);
   if (S.me.role === 'tienda') { $('#fuentes').hidden = true; mostrar('tienda'); return; }
   pintarFuentes();
+  montarCampana();
   await cargarCasos();
   mostrar('casos');
 }
@@ -99,7 +100,7 @@ function pintarFuentes() {
   vaciar($('#fuentes')).append(
     h('span', {}, 'Hoy: ', h('strong', {}, fecha(hoyISO()))),
     item('Backlog', u.backlog), item('KGB', u.kgb), item('Open Orders', u.openorders), item('Inventario', u.inventario), item('Precios', u.precios), item('Parts Data', u.partes), item('Tiendas', u.shipto),
-    h('span', {}, `Fill rate: despacho hasta ETA + ${S.me.tolerancia} días`),
+    h('span', {}, `Fill rate: despachado en la primera ETA o antes · Plazo de alertas: ETA + ${S.me.tolerancia} días`),
   );
 }
 
@@ -160,7 +161,7 @@ const GRUPOS = {
 };
 
 const ALERTAS_NOMBRE = {
-  FUERA_FR: 'Venció el plazo de fill rate', RIESGO_FR: 'Despacho después del límite', SIN_MARGEN: 'Sin margen en el plazo',
+  FUERA_FR: 'Venció el plazo (ETA + tolerancia)', NOTA_ACM: 'Nota nueva de la ACM', RIESGO_FR: 'Despacho después del límite', SIN_MARGEN: 'Sin margen en el plazo',
   OH_DEMORADO: 'OH demorado', ETA_NO_HABIL: 'ETA en día no hábil', GUIA_NO_KGB: 'Guía no aparece en KGB',
   GUIA_SIN_PARTE: 'Guía sin la parte', ETA_ANTES_KGB: 'ETA antes de la llegada KGB', GUIA_RETRASADA: 'Guía retrasada', FUERA_SLA_APPLE: 'Fuera de SLA Apple',
   SIN_RECEPCION: 'Llegada sin recepción', POSIBLE_DOBLE_COMPRA: 'Miami con parte en KGB', KAM_PENDIENTE: 'Esperando a la ACM',
@@ -195,14 +196,15 @@ function pintarCasos() {
       [['', 'Sin agrupar'], ['tienda', 'Tienda'], ['opcion', 'Solución'], ['estado', 'Estado'], ['nivel', 'Alerta'], ['guia', 'Guía'], ['parte', 'Parte']]
         .map(([k, t]) => h('option', { value: k, selected: S.grupo === k }, t)))),
     h('label', { class: 'campo' }, 'Ordenar por', h('select', { onchange: (ev) => { S.orden = ev.target.value; pintarTabla(); } },
-      [['prioridad', 'Prioridad'], ['limite', 'Días al límite de fill rate'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['edadDespacho', 'Edad al despacho (mayor primero)'], ['tienda', 'Tienda']]
+      [['prioridad', 'Prioridad'], ['limite', 'Días al límite (ETA + tolerancia)'], ['eta', 'Días a la ETA'], ['edad', 'Edad (más antiguos)'], ['edadDespacho', 'Edad al despacho (mayor primero)'], ['tienda', 'Tienda']]
         .map(([k, t]) => h('option', { value: k, selected: S.orden === k }, t)))),
     h('span', { class: 'separa' }),
     S.me.ver_precios ? h('a', { class: 'btn sec', href: '/api/export/cases.csv' }, 'Exportar CSV') : null,
   ));
+  if (puedeEditar()) v.append(h('div', { class: 'panel lote', id: 'lote', hidden: true }));
   v.append(h('p', { class: 'resumen', id: 'resumen' }));
   v.append(h('div', { class: 'leyenda' },
-    h('span', {}, h('i', { class: 'l-ventana' }), 'Ventana de fill rate (ETA a ETA + tolerancia)'),
+    h('span', {}, h('i', { class: 'l-ventana' }), 'Ventana (ETA a ETA + tolerancia)'),
     h('span', {}, h('i', { class: 'l-hoy' }), 'Hoy'),
     h('span', {}, h('i', { class: 'l-llegada' }), 'Llegada'),
     h('span', {}, h('i', { class: 'l-despacho' }), 'Despacho posible: verde con margen, ámbar el último día, rojo fuera de la ventana'),
@@ -233,7 +235,7 @@ function carril(c) {
     else if (c.limite_fr && c.despacho_posible === c.limite_fr) cls += ' ambar';
     const m = h('div', { class: `${cls}${p.fuera ? ' fuera' : ''}` }); m.style.left = `${p.pct}%`; el.append(m);
   }
-  el.title = `Llegada: ${fechaLarga(c.llegada)} (${c.llegada_fuente})\nDespacho ${c.fecha_despacho ? 'realizado' : 'posible'}: ${fechaLarga(c.despacho_posible)}\nVentana de fill rate: ${fechaLarga(c.eta_jenny)} a ${fechaLarga(c.limite_fr)}`;
+  el.title = `Llegada: ${fechaLarga(c.llegada)} (${c.llegada_fuente})\nDespacho ${c.fecha_despacho ? 'realizado' : 'posible'}: ${fechaLarga(c.despacho_posible)}\nVentana: ${fechaLarga(c.eta_jenny)} a ${fechaLarga(c.limite_fr)}`;
   return el;
 }
 
@@ -248,6 +250,7 @@ function filaCaso(c) {
     onclick: () => seleccionar(c.key_notif),
     onkeydown: (ev) => { if (ev.key === 'Enter') seleccionar(c.key_notif); },
   },
+  puedeEditar() ? casillaCaso(c) : null,
   h('td', { class: 'nivel' }, h('span', { class: `punto ${c.nivel}`, title: c.alerts.map((a) => a.text).join('\n') || 'Sin alertas' })),
   h('td', {}, h('span', { class: 'caso' }, c.key_notif), c.super_asp ? [' ', h('span', { class: 'etiqueta super' }, 'Super ASP')] : null,
     c.responsable ? h('span', { class: 'sub' }, c.responsable) : null),
@@ -279,7 +282,7 @@ function pintarTabla() {
     return;
   }
   const tbody = h('tbody');
-  const cols = 11;
+  const cols = puedeEditar() ? 12 : 11;
   if (S.grupo) {
     const grupos = new Map();
     for (const c of lista) { const k = GRUPOS[S.grupo](c) || '—'; if (!grupos.has(k)) grupos.set(k, []); grupos.get(k).push(c); }
@@ -298,11 +301,12 @@ function pintarTabla() {
     lista.forEach((c) => tbody.append(filaCaso(c)));
   }
   marco.append(h('table', {},
-    h('thead', {}, h('tr', {}, h('th', {}, ''), h('th', {}, 'Caso'), h('th', {}, 'Tienda'), h('th', {}, 'Parte'),
+    h('thead', {}, h('tr', {}, puedeEditar() ? casillaTodos(lista) : null, h('th', {}, ''), h('th', {}, 'Caso'), h('th', {}, 'Tienda'), h('th', {}, 'Parte'),
       h('th', {}, 'Solución'), h('th', {}, 'ETA Apple'), h('th', { title: 'Tres semanas: 4 días atrás y 17 adelante' }, 'Carril'),
       h('th', {}, 'Despacho'), h('th', { class: 'num c-edad' }, 'Edad'), h('th', {}, 'Estado'), h('th', { class: 'num c-precio' }, 'Precio'))),
     tbody));
   if (!lista.length) marco.append(h('div', { class: 'vacio' }, 'Ningún caso coincide con los filtros.'));
+  pintarLote();
 }
 
 function seleccionar(key) {
@@ -341,7 +345,8 @@ async function abrirDetalle(key) {
     dato('ETA de Apple', fechaLarga(c.eta_jenny), c.eta_changes ? ` (inicial ${fechaLarga(c.eta_first)}, ${c.eta_changes} cambio${c.eta_changes > 1 ? 's' : ''})` : ''),
     dato('Llegada', fechaLarga(c.llegada), ` (${c.llegada_fuente})`),
     dato(c.fecha_despacho ? 'Despachado' : 'Despacho posible', fechaLarga(c.despacho_posible)),
-    dato('Límite fill rate', fechaLarga(c.limite_fr)),
+    dato('Límite (ETA + tolerancia)', fechaLarga(c.limite_fr)),
+    dato('Meta de fill rate (primera ETA)', fechaLarga(c.eta_first || c.eta_jenny)),
     dato('Fecha para la tienda', fechaLarga(c.fecha_cliente), c.fecha_comunicada ? ` (última comunicada: ${fechaLarga(c.fecha_comunicada)})` : ''),
     dato('Edad', c.edad === null ? '—' : `${c.edad} días desde la creación`),
     dato(c.fecha_despacho ? 'Edad al despacho' : 'Edad al despacho (proyectada)', c.edad_despacho === null ? '—' : `${c.edad_despacho} días`),
@@ -358,6 +363,7 @@ async function abrirDetalle(key) {
   g.aprobacion_kam = h('select', {}, S.me.aprobacion.map((p) => h('option', { value: p, selected: p === c.aprobacion_kam }, p)));
   const editable = puedeEditar();
   Object.values(g).forEach((el) => { el.disabled = !editable; });
+  if (S.me.role !== 'admin') { if (c.fecha_recepcion) g.fecha_recepcion.disabled = true; if (c.fecha_despacho) g.fecha_despacho.disabled = true; }
   panel.append(h('div', { class: 'bloque' }, h('h3', {}, 'Gestión'),
     h('div', { class: 'form' },
       campo('Estado', g.estado), campo('Responsable', g.responsable),
@@ -365,6 +371,7 @@ async function abrirDetalle(key) {
       campo('Fecha a comunicar (opcional)', g.fecha_objetivo), campo('Cambio de solución propuesto', g.propuesta),
       campo('Aprobación del Apple Care Manager', g.aprobacion_kam),
       c.kam_solicitado ? h('p', { class: 'nota ancho' }, `Solicitada ${fechaLarga(c.kam_solicitado)}${c.kam_respuesta ? `, respondida ${fechaLarga(c.kam_respuesta)}` : ''}.`) : null),
+    bloqueSolicitud(c, det, key),
     editable ? h('div', { class: 'acciones' }, h('button', {
       class: 'btn', type: 'button', onclick: intentar(async () => {
         const body = {};
@@ -423,8 +430,12 @@ async function abrirDetalle(key) {
         aviso(esAcm ? 'Nota agregada.' : 'Comentario agregado.'); abrirDetalle(key);
       }),
     }, esAcm ? 'Agregar nota' : 'Agregar comentario'))] : null,
-    det.comentarios.length ? det.comentarios.map((m) => h('div', { class: 'comentario' }, h('small', {}, `${m.username}, ${m.at.replace('T', ' ')}`,
-      esAcm ? null : h('span', { class: `vis ${m.visibilidad}` }, m.visibilidad === 'compartido' ? 'Compartido con Apple' : 'Interno')), m.text))
+    det.comentarios.length ? det.comentarios.map((m) => h('div', { class: `comentario${m.autor_rol === 'acm' && !m.leida_at ? ' sin-leer' : ''}` }, h('small', {}, `${m.username}, ${m.at.replace('T', ' ')}`,
+      esAcm ? null : h('span', { class: `vis ${m.visibilidad}` }, m.autor_rol === 'acm' ? 'Nota de la ACM' : m.visibilidad === 'compartido' ? 'Compartido con Apple' : 'Interno'),
+      m.autor_rol === 'acm' && m.leida_at ? h('span', { class: 'vis' }, `Leída por ${m.leida_por}`) : null), m.text,
+      m.autor_rol === 'acm' && !m.leida_at && !esAcm ? h('div', { class: 'acciones' }, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+        await api('POST', '/api/avisos/leidas', { ids: [m.id] }); refrescarAvisos(); await cargarCasos(); pintarTabla(); abrirDetalle(key);
+      }) }, 'Marcar leída')) : null))
       : h('p', { class: 'nota' }, 'Sin comentarios todavía.')));
 
   const hist = [
@@ -548,14 +559,16 @@ async function pintarIndicadores() {
   const fr = k.fill_rate;
   const cifra = (valor, label, cls) => h('div', { class: `cifra${cls ? ` ${cls}` : ''}` }, h('b', {}, valor), h('span', {}, label));
   v.append(h('div', { class: 'tira' },
-    cifra(fr.valor === null ? '—' : `${fr.valor}%`, fr.valor === null ? 'Fill rate backlog: registre fechas de despacho para calcularlo' : `Fill rate backlog (${fr.a_tiempo} de ${fr.evaluadas} líneas a tiempo)`, 'principal'),
+    cifra(k.aging.backlog_prom === null ? '—' : `${k.aging.backlog_prom} d`, `aging promedio del backlog (${k.aging.backlog_lineas} líneas por despachar)`, 'principal'),
+    cifra(k.aging.despacho_prom === null ? '—' : `${k.aging.despacho_prom} d`, k.aging.despacho_prom === null ? 'aging promedio de despacho: registre fechas de despacho' : `aging promedio de despacho (${k.aging.despachadas_30d} despachadas en 30 días)`),
+    cifra(fr.valor === null ? '—' : `${fr.valor}%`, fr.valor === null ? 'fill rate: registre fechas de despacho para calcularlo' : `fill rate: despachadas en la ETA o antes (${fr.a_tiempo} de ${fr.evaluadas})`),
     cifra(k.proyeccion.en_riesgo, `en riesgo de ${k.proyeccion.vencen_7d} que vencen en 7 días`, k.proyeccion.en_riesgo ? 'alerta-cifra' : ''),
     cifra(k.pendientes_despacho, `líneas por despachar (${k.reparaciones} reparaciones)`),
     S.me.ver_precios ? cifra(dinero(k.valor.total, k.moneda), k.valor.sin_precio ? `valor pendiente (${k.valor.sin_precio} líneas sin precio)` : 'valor pendiente') : null,
     cifra(k.oh.total, `OH por despachar (${k.oh.demorados} demorados)`, k.oh.demorados ? 'alerta-cifra' : ''),
     cifra(k.kam.pendientes, k.kam.dias_prom === null ? 'esperando al Apple Care Manager' : `esperando al Apple Care Manager (${k.kam.dias_prom} días prom.)`),
   ));
-  v.append(h('p', { class: 'nota' }, `Fill rate: líneas cuyo límite (ETA + tolerancia) venció desde el ${fecha(fr.desde)}; a tiempo si la fecha de despacho registrada es igual o anterior al límite.`,
+  v.append(h('p', { class: 'nota' }, `Aging del backlog: días promedio desde la creación de las líneas por despachar. Aging de despacho: días promedio de la creación al despacho, en lo despachado los últimos 30 días. Fill rate: líneas cuya primera ETA de Apple pasó desde el ${fecha(fr.desde)}; a tiempo si se despacharon en esa ETA o antes.`,
     fr.sin_registro ? ` ${fr.sin_registro} líneas salieron del reporte sin fecha de despacho y no se cuentan.` : ''));
 
   const ti = k.tiendas;
@@ -820,7 +833,7 @@ async function panelMiami() {
   const todas = h('input', { type: 'checkbox', checked: !!S.mTodas, onchange: intentar(async (ev) => { S.mTodas = ev.target.checked; await pintarPartes(); }) });
   return h('div', { class: 'panel' }, h('h2', {}, 'Compras en Miami'),
     h('p', {}, `Se registran en el detalle de cada caso. Si no se indica la llegada, es la compra + ${r.lead_dias} días (Administración). `,
-      '"Apple lo trae antes" sale cuando lo que viene en el KGB o en Open Orders alcanza a despacharse dentro del límite de fill rate, o llega antes que Miami.'),
+      '"Apple lo trae antes" sale cuando lo que viene en el KGB o en Open Orders alcanza a despacharse dentro del límite (ETA + tolerancia), o llega antes que Miami.'),
     h('div', { class: 'tira' },
       cifra(res.activas, 'compras activas'),
       cifra(res.evaluar, 'para evaluar cancelar: Apple lo trae antes', res.evaluar ? 'alerta-cifra' : ''),
@@ -916,6 +929,196 @@ async function panelTiendasUsuarios(usuarios) {
   caja.append(h('h2', { class: 'separado' }, 'Vista previa'), h('p', { class: 'nota' }, 'Así ve una tienda sus casos.'),
     h('div', { class: 'barra' }, sel, h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => { await pintarTienda(sel.value, previa); }) }, 'Ver como esa tienda')),
     previa);
+  return caja;
+}
+
+// ------------------------------------------------------------------ avisos (campana)
+const esInterno = () => ['admin', 'editor', 'lector'].includes(S.me.role);
+
+function montarCampana() {
+  if (!esInterno() || $('#campana')) return;
+  const cuenta = h('span', { class: 'cuenta-avisos', hidden: true });
+  const panel = h('div', { class: 'avisos-panel', id: 'avisos-panel', hidden: true });
+  const boton = h('button', { id: 'campana', type: 'button', title: 'Avisos: notas de la ACM y solicitudes', 'aria-haspopup': 'true',
+    onclick: intentar(async () => { panel.hidden = !panel.hidden; if (!panel.hidden) await pintarAvisos(); }) }, 'Avisos ', cuenta);
+  $('#quien').before(h('div', { class: 'campana' }, boton, panel));
+  document.addEventListener('click', (ev) => { if (!ev.target.closest('.campana')) panel.hidden = true; });
+  refrescarAvisos();
+  setInterval(() => refrescarAvisos(), 60000);
+}
+
+async function refrescarAvisos() {
+  if (!esInterno()) return null;
+  let a;
+  try { a = await api('GET', '/api/avisos'); } catch (e) { return null; }
+  const c = document.querySelector('.cuenta-avisos');
+  if (c) { c.textContent = a.total; c.hidden = !a.total; }
+  return a;
+}
+
+async function pintarAvisos() {
+  const a = await refrescarAvisos();
+  const panel = $('#avisos-panel');
+  if (!a || !panel) return;
+  const abrir = (key) => { $('#avisos-panel').hidden = true; S.f.q = key.split('|')[0]; S.sel = key; mostrar('casos'); };
+  const leer = (ids) => intentar(async (ev) => { ev.stopPropagation(); await api('POST', '/api/avisos/leidas', { ids }); await pintarAvisos(); await cargarCasos(); if (!$('#v-casos').hidden) pintarTabla(); });
+  vaciar(panel).append(h('div', {},
+    h('div', { class: 'avisos-cab' }, h('b', {}, `Notas de la ACM sin leer (${a.notas.length})`),
+      a.notas.length ? h('button', { class: 'btn sec', type: 'button', onclick: leer(a.notas.map((n) => n.id)) }, 'Marcar todas leídas') : null),
+    a.notas.length ? a.notas.map((n) => h('div', { class: 'aviso-item' },
+      h('small', {}, `${n.username}, ${n.at.replace('T', ' ').slice(0, 16)} · ${n.list_name || ''}`),
+      h('p', {}, n.text),
+      h('div', { class: 'acciones' },
+        h('button', { class: 'btn sec', type: 'button', onclick: () => abrir(n.key_notif) }, `Abrir ${n.key_notif}`),
+        h('button', { class: 'btn sec', type: 'button', onclick: leer([n.id]) }, 'Marcar leída'))))
+      : h('p', { class: 'nota' }, 'No hay notas nuevas.'),
+    S.me.role === 'admin' ? [h('div', { class: 'avisos-cab' }, h('b', {}, `Solicitudes de cambio de fecha (${a.solicitudes.length})`),
+      a.solicitudes.length ? h('button', { class: 'btn sec', type: 'button', onclick: () => { $('#avisos-panel').hidden = true; mostrar('admin'); } }, 'Ir a Administración') : null),
+    a.solicitudes.map((s) => h('div', { class: 'aviso-item' }, h('small', {}, `${s.solicitado_por} · ${s.key_notif}`),
+      h('p', {}, `${s.campo === 'fecha_despacho' ? 'Despacho' : 'Recepción'}: ${fechaLarga(s.valor_actual)} → ${s.valor_nuevo ? fechaLarga(s.valor_nuevo) : 'borrar'}. ${s.motivo}`)))] : null,
+    a.mis_solicitudes.length ? [h('div', { class: 'avisos-cab' }, h('b', {}, 'Mis solicitudes resueltas (7 días)')),
+      a.mis_solicitudes.map((s) => h('div', { class: 'aviso-item' }, h('small', {}, `${s.key_notif} · ${s.estado} por ${s.resuelto_por}`),
+        h('p', {}, `${s.campo === 'fecha_despacho' ? 'Despacho' : 'Recepción'} → ${s.valor_nuevo ? fechaLarga(s.valor_nuevo) : 'borrar'}${s.respuesta ? `. ${s.respuesta}` : ''}`)))] : null));
+}
+
+// ------------------------------------------------------------------ selección múltiple
+function casillaCaso(c) {
+  return h('td', { class: 'sel', onclick: (ev) => ev.stopPropagation() }, h('input', {
+    type: 'checkbox', checked: S.selec.has(c.key_notif), 'aria-label': `Seleccionar ${c.key_notif}`,
+    onchange: (ev) => { ev.target.checked ? S.selec.add(c.key_notif) : S.selec.delete(c.key_notif); pintarLote(); },
+  }));
+}
+
+function casillaTodos(lista) {
+  const todos = lista.length && lista.every((c) => S.selec.has(c.key_notif));
+  return h('th', { class: 'sel' }, h('input', {
+    type: 'checkbox', checked: todos, title: 'Seleccionar todo lo filtrado', 'aria-label': 'Seleccionar todo lo filtrado',
+    onchange: (ev) => { lista.forEach((c) => (ev.target.checked ? S.selec.add(c.key_notif) : S.selec.delete(c.key_notif))); pintarTabla(); },
+  }));
+}
+
+function pintarLote() {
+  const caja = $('#lote');
+  if (!caja) return;
+  vaciar(caja);
+  const visibles = new Set(S.casos.map((c) => c.key_notif));
+  for (const k of [...S.selec]) if (!visibles.has(k)) S.selec.delete(k);
+  if (!S.selec.size) { caja.hidden = true; return; }
+  caja.hidden = false;
+  const campo = (label, el) => h('label', { class: 'campo' }, label, el);
+  const f = {
+    estado: h('select', {}, h('option', { value: '' }, '— Sin cambio —'), S.me.estados.map((e) => h('option', { value: e }, e))),
+    responsable: h('input', { maxlength: 80, placeholder: 'Sin cambio' }),
+    fecha_recepcion: h('input', { type: 'date' }), fecha_despacho: h('input', { type: 'date' }), fecha_objetivo: h('input', { type: 'date' }),
+    propuesta: h('select', {}, h('option', { value: '__' }, '— Sin cambio —'), S.me.propuestas.map((p) => h('option', { value: p }, p || 'Quitar propuesta'))),
+    aprobacion_kam: h('select', {}, h('option', { value: '' }, '— Sin cambio —'), S.me.aprobacion.map((p) => h('option', { value: p }, p))),
+  };
+  const coment = h('textarea', { maxlength: 2000, placeholder: 'Comentario para todos los casos (opcional)' });
+  const vis = h('select', { class: 'solo' }, h('option', { value: 'interno' }, 'Interno'), h('option', { value: 'compartido' }, 'Compartido con Apple'));
+  const res = h('div', { class: 'lote-res' });
+  const cuerpo = () => {
+    const cambios = {};
+    for (const [k, el] of Object.entries(f)) {
+      if (k === 'propuesta') { if (el.value !== '__') cambios[k] = el.value; } else if (el.value) cambios[k] = el.value;
+    }
+    return { keys: [...S.selec], cambios, comentario: coment.value, visibilidad: vis.value };
+  };
+  const previa = intentar(async () => {
+    const b = cuerpo();
+    const r = await api('POST', '/api/lote/vista-previa', b);
+    vaciar(res).append(h('div', {},
+      h('p', {}, h('b', {}, r.con_cambios), ` de ${r.casos} casos cambian`, r.sin_cambios ? `, ${r.sin_cambios} ya tenían esos valores` : '',
+        r.comentario ? `; el comentario se agrega a los ${r.casos}` : '', '.'),
+      r.omitidos.length ? h('div', { class: 'alerta ambar' }, `No se aplica en ${r.omitidos.length}: `, r.omitidos.slice(0, 8).map((o) => `${o.key} (${o.motivo})`).join('; '), r.omitidos.length > 8 ? '…' : '') : null,
+      r.detalle.filter((p) => Object.keys(p.diff).length).length ? h('table', { class: 'mini' },
+        h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Cambios'].map((t) => h('th', {}, t)))),
+        h('tbody', {}, r.detalle.filter((p) => Object.keys(p.diff).length).slice(0, 15).map((p) => h('tr', {}, h('td', {}, p.key), h('td', {}, p.tienda),
+          h('td', {}, Object.entries(p.diff).map(([k, v]) => `${CAMPOS[k] || k}: ${v.antes ?? '—'} → ${v.ahora ?? '—'}`).join('; ')))))) : null,
+      h('div', { class: 'acciones' }, h('button', { class: 'btn', type: 'button', onclick: intentar(async () => {
+        const x = await api('POST', '/api/lote', cuerpo());
+        aviso(`Tanda #${x.id}: ${x.con_cambios} casos cambiados${x.comentarios ? `, ${x.comentarios} comentarios` : ''}. Se puede deshacer hoy.`);
+        S.selec.clear(); await cargarCasos(); pintarTabla();
+      }) }, `Aplicar a ${r.casos} casos`))));
+  });
+  caja.append(h('div', { class: 'lote-cab' }, h('b', {}, `${S.selec.size} casos seleccionados`),
+    h('button', { class: 'btn sec', type: 'button', onclick: () => { S.selec.clear(); pintarTabla(); } }, 'Quitar selección'),
+    h('span', { class: 'separa' }), h('button', { class: 'btn sec', type: 'button', onclick: intentar(pintarTandas) }, 'Tandas de hoy')),
+  h('p', { class: 'nota' }, 'Solo se aplica lo que llene. Las fechas de recepción y despacho que ya estén registradas no se cambian aquí (requieren solicitud).'),
+  h('div', { class: 'form lote-form' }, campo('Estado', f.estado), campo('Responsable', f.responsable), campo('Fecha de recepción', f.fecha_recepcion),
+    campo('Fecha de despacho', f.fecha_despacho), campo('Fecha a comunicar', f.fecha_objetivo), campo('Cambio de solución', f.propuesta),
+    campo('Aprobación ACM', f.aprobacion_kam)),
+  coment, h('div', { class: 'acciones' }, vis, h('button', { class: 'btn', type: 'button', onclick: previa }, 'Vista previa')), res,
+  h('div', { id: 'tandas' }));
+}
+
+async function pintarTandas() {
+  const el = $('#tandas'); if (!el) return;
+  const t = await api('GET', '/api/lotes');
+  vaciar(el).append(t.length ? h('table', { class: 'mini' },
+    h('thead', {}, h('tr', {}, ['Tanda', 'Hora', 'Usuario', 'Cambios', 'Casos', ''].map((x) => h('th', {}, x)))),
+    h('tbody', {}, t.map((l) => h('tr', {}, h('td', {}, `#${l.id}`), h('td', {}, l.at.slice(11, 16)), h('td', {}, l.username),
+      h('td', {}, Object.entries(l.cambios).filter(([, v]) => v !== null && v !== undefined).map(([k, v]) => `${CAMPOS[k] || k}: ${v || '—'}`).join('; ')),
+      h('td', { class: 'num' }, l.casos),
+      h('td', {}, l.deshecho_at ? `Deshecha por ${l.deshecho_por}` : h('button', { class: 'btn sec', type: 'button', onclick: intentar(async () => {
+        const r = await api('POST', `/api/lote/${l.id}/deshacer`);
+        aviso(`Tanda #${l.id} deshecha en ${r.casos} casos${r.campos_saltados ? ` (${r.campos_saltados} campos ya habían cambiado y se dejaron)` : ''}. Los comentarios quedan en la bitácora.`);
+        await cargarCasos(); pintarTabla(); pintarTandas();
+      }) }, 'Deshacer')))))) : h('p', { class: 'nota' }, 'Hoy no hay tandas.'));
+}
+
+// ------------------------------------------------------------------ solicitudes de cambio de fecha (detalle y administración)
+function bloqueSolicitud(c, det, key) {
+  if (!puedeEditar()) return null;
+  const pendientes = det.solicitudes.filter((s) => s.estado === 'Pendiente');
+  const campoSel = h('select', { class: 'solo' },
+    c.fecha_despacho ? h('option', { value: 'fecha_despacho' }, 'Fecha de despacho') : null,
+    c.fecha_recepcion ? h('option', { value: 'fecha_recepcion' }, 'Fecha de recepción') : null);
+  const nueva = h('input', { type: 'date', class: 'solo' });
+  const motivo = h('textarea', { maxlength: 500, placeholder: 'Motivo del cambio (obligatorio)' });
+  const form = h('div', { class: 'solicitud-form', hidden: true },
+    h('div', { class: 'barra' }, h('label', { class: 'campo' }, 'Fecha', campoSel), h('label', { class: 'campo' }, 'Nueva fecha (vacía = borrar)', nueva)), motivo,
+    h('div', { class: 'acciones' }, h('button', { class: 'btn', type: 'button', onclick: intentar(async () => {
+      await api('POST', `/api/cases/${encodeURIComponent(key)}/solicitudes`, { campo: campoSel.value, valor_nuevo: nueva.value || null, motivo: motivo.value });
+      aviso('Solicitud enviada al administrador.'); refrescarAvisos(); abrirDetalle(key);
+    }) }, 'Enviar solicitud')));
+  const protegidas = S.me.role !== 'admin' && (c.fecha_despacho || c.fecha_recepcion);
+  return h('div', { class: 'solicitudes' },
+    protegidas ? h('p', { class: 'nota' }, 'Las fechas de recepción y despacho se registran una sola vez. Para cambiarlas: ',
+      h('button', { class: 'btn sec', type: 'button', onclick: () => { form.hidden = !form.hidden; } }, 'Solicitar cambio')) : null,
+    protegidas ? form : null,
+    det.solicitudes.map((s) => h('div', { class: `alerta ${s.estado === 'Pendiente' ? 'ambar' : s.estado === 'Aprobada' ? 'info' : 'rojo'}` },
+      `Solicitud ${s.estado.toLowerCase()} (${s.solicitado_por}, ${s.solicitado_at.slice(0, 10)}): ${s.campo === 'fecha_despacho' ? 'despacho' : 'recepción'} ${fechaLarga(s.valor_actual)} → ${s.valor_nuevo ? fechaLarga(s.valor_nuevo) : 'borrar'}. ${s.motivo}`,
+      s.respuesta ? ` Respuesta: ${s.respuesta}` : '')),
+    pendientes.length ? null : null);
+}
+
+async function panelSolicitudes() {
+  const lista = await api('GET', '/api/solicitudes');
+  const caja = h('div', { class: 'panel' }, h('h2', {}, 'Solicitudes de cambio de fecha'),
+    h('p', {}, 'Los editores registran la fecha de recepción y la de despacho una sola vez. Para cambiarlas envían una solicitud con el motivo; aquí se aprueba (se aplica y queda en el historial del caso) o se rechaza con una respuesta.'));
+  const pend = lista.filter((s) => s.estado === 'Pendiente');
+  const otras = lista.filter((s) => s.estado !== 'Pendiente').slice(0, 30);
+  caja.append(pend.length ? h('table', { class: 'mini' },
+    h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Fecha', 'Actual', 'Nueva', 'Motivo', 'Pidió', 'Respuesta', ''].map((t) => h('th', {}, t)))),
+    h('tbody', {}, pend.map((s) => {
+      const resp = h('input', { class: 'solo', maxlength: 500, placeholder: 'Obligatoria si rechaza' });
+      const resolver = (aprobar) => intentar(async () => {
+        await api('POST', `/api/solicitudes/${s.id}/resolver`, { aprobar, respuesta: resp.value });
+        aviso(aprobar ? 'Solicitud aprobada y aplicada.' : 'Solicitud rechazada.'); refrescarAvisos(); await cargarCasos(); pintarAdmin();
+      });
+      return h('tr', {}, h('td', {}, s.key_notif), h('td', {}, s.list_name || '—'), h('td', {}, s.campo === 'fecha_despacho' ? 'Despacho' : 'Recepción'),
+        h('td', { class: 'fecha' }, fecha(s.valor_actual)), h('td', { class: 'fecha' }, s.valor_nuevo ? fecha(s.valor_nuevo) : 'Borrar'),
+        h('td', {}, s.motivo), h('td', {}, `${s.solicitado_por}, ${s.solicitado_at.slice(0, 10)}`), h('td', {}, resp),
+        h('td', {}, h('div', { class: 'acciones' }, h('button', { class: 'btn', type: 'button', onclick: resolver(true) }, 'Aprobar'),
+          h('button', { class: 'btn sec', type: 'button', onclick: resolver(false) }, 'Rechazar'))));
+    }))) : h('p', { class: 'nota' }, 'No hay solicitudes pendientes.'));
+  if (otras.length) {
+    caja.append(h('h2', { class: 'separado' }, 'Resueltas (30 días)'), h('table', { class: 'mini' },
+      h('thead', {}, h('tr', {}, ['Caso', 'Fecha', 'Cambio', 'Motivo', 'Pidió', 'Resultado'].map((t) => h('th', {}, t)))),
+      h('tbody', {}, otras.map((s) => h('tr', {}, h('td', {}, s.key_notif), h('td', {}, s.campo === 'fecha_despacho' ? 'Despacho' : 'Recepción'),
+        h('td', {}, `${fecha(s.valor_actual)} → ${s.valor_nuevo ? fecha(s.valor_nuevo) : 'borrar'}`), h('td', {}, s.motivo), h('td', {}, s.solicitado_por),
+        h('td', {}, `${s.estado} por ${s.resuelto_por}${s.respuesta ? `: ${s.respuesta}` : ''}`))))));
+  }
   return caja;
 }
 
@@ -1042,6 +1245,7 @@ async function pintarAdmin() {
   const v = vaciar($('#v-admin'));
   if (S.me.role !== 'admin') return;
   const [usuarios, cfg, bitacora] = await Promise.all([api('GET', '/api/users'), api('GET', '/api/settings'), api('GET', '/api/audit?limit=200')]);
+  v.append(await panelSolicitudes());
 
   const nu = { username: h('input', { maxlength: 64 }), full_name: h('input', { maxlength: 120 }),
     role: h('select', {}, S.me.roles.map((r) => h('option', { value: r, selected: r === 'editor' }, r))), password: h('input', { type: 'password', autocomplete: 'new-password' }) };
@@ -1072,7 +1276,7 @@ async function pintarAdmin() {
   v.append(await panelAliasTiendas());
 
   const etiquetas = {
-    kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia de fill rate (días después de la ETA)',
+    kgb_cust_ids: 'Cliente KGB (código; varios separados por coma)', fr_tolerance_days: 'Tolerancia del plazo de alertas (días después de la ETA)',
     fr_tolerance_business: 'Tolerancia en días hábiles (1) o calendario (0)', exchange_codes: 'Garantías con precio exchange (separadas por coma)',
     despachado_grace_days: 'Días hábiles tras la ETA para avisar si un despachado sigue en el reporte', kam_alert_days: 'Días de espera del Apple Care Manager antes de alertar',
     oh_max_days: 'Días hábiles máximos de un OH sin despachar',
