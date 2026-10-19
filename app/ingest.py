@@ -163,7 +163,7 @@ def load_backlog(conn, data: bytes, name: str, fecha: str | None, user) -> dict:
             "product_description": to_str(r.get("Product Description")),
             "option_jenny": to_str(r["Option"]), "eta_jenny": to_date(r["Initial ETA Resolution"]),
             "comments_jenny": comments, "notes_jenny": notes,
-            # La guía activa es la que Jenny escribe en Comments; la de Notes es la guía retrasada original.
+            # La guía activa es la que la ACM escribe en Comments; la de Notes es la guía retrasada original.
             "tracking": json.dumps(logic.parse_tracking(comments)),
             "subs": json.dumps(logic.parse_parts(comments, exclude=assembly)),
         }
@@ -216,42 +216,6 @@ def load_backlog(conn, data: bytes, name: str, fecha: str | None, user) -> dict:
     stats["abiertas"] = conn.execute("SELECT COUNT(*) n FROM cases WHERE source_status='abierto'").fetchone()["n"]
     conn.execute("UPDATE loads SET summary=? WHERE id=?", (json.dumps(stats), load_id))
     db.audit(conn, user, "load_backlog", name, {"fecha": file_date, **stats})
-    return {"fecha": file_date, **stats}
-
-
-# ---------------------------------------------------------------- KGB
-def load_kgb(conn, data: bytes, name: str, fecha: str | None, user) -> dict:
-    file_hash = hashlib.sha256(data).hexdigest()
-    file_date = fecha or date_from_name(name)
-    if not file_date:
-        raise LoadError("No encontré la fecha en el nombre del archivo. Indíquela en el formulario.")
-    _check_order(conn, "kgb", file_date, file_hash)
-    sheets = read_table(data, name)
-    df = _columns(next(iter(sheets.values())))
-    _require(df, KGB_REQUIRED, "KGB")
-
-    wanted = {c.strip().lstrip("0") for c in db.get_settings(conn).get("kgb_cust_ids", "").split(",") if c.strip()}
-    df["_cust"] = df["CUST_ID"].map(lambda v: (to_str(v) or "").lstrip("0"))
-    total = len(df)
-    if wanted:
-        df = df[df["_cust"].isin(wanted)]
-    if df.empty:
-        raise LoadError("Ninguna fila del KGB corresponde al cliente configurado. Revise 'Cliente KGB' en Administración.")
-
-    conn.execute("DELETE FROM kgb")
-    for _, r in df.iterrows():
-        prod = to_str(r["PROD_ID"])
-        conn.execute(
-            """INSERT INTO kgb(tracking, delivery_id, delivery_item, poso, prod_id, prod_norm, prod_desc, status,
-               current_event, event_dt, edd, pgi_dt, sla_ind, issue, qty, cust_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (to_str(r["TRACKING_NR"]), to_str(r["DELIVERY_ID"]), to_str(r.get("DELIVERY_ITEM_NR")), to_str(r.get("POSO_NR")),
-             prod, logic.norm_part(prod), to_str(r.get("PROD_DESC")), to_str(r["STATUS_DESC"]),
-             to_str(r["CURRENT_EVENT"]), to_date(r.get("CURRENT_EVENT_DT")), to_date(r["EDD"]), to_date(r.get("PGI_DT")),
-             to_str(r.get("IN_OUT_SLA_IND")), to_str(r.get("ISSUE_DESC")), to_num(r["DELIVERY_QTY"]), r["_cust"]))
-    guides = df["TRACKING_NR"].map(to_str).dropna().nunique()
-    stats = {"filas_archivo": int(total), "filas_cliente": int(len(df)), "guias": int(guides)}
-    _register_load(conn, "kgb", name, file_hash, file_date, user, int(len(df)), stats)
-    db.audit(conn, user, "load_kgb", name, {"fecha": file_date, **stats})
     return {"fecha": file_date, **stats}
 
 
@@ -418,4 +382,4 @@ def load_shipto(conn, data: bytes, name: str, user) -> dict:
     stats = {"tiendas": n, "inactivas_omitidas": skipped, "con_correo": bool(mail_col), "con_copia": bool(cc_col)}
     _register_load(conn, "shipto", name, hashlib.sha256(data).hexdigest() + now, date.today().isoformat(), user, n, stats)
     db.audit(conn, user, "load_shipto", name, stats)
-    return stats
+    return stats

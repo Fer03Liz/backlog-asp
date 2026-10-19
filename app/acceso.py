@@ -1,7 +1,7 @@
 """Roles externos: Apple Care Manager (acm) y tienda.
 
 - admin, editor y lector son del equipo Ingram y ven todo (lector sin editar).
-- acm (Jenny): ve todos los casos, Abastecimiento e Indicadores. No edita, pero deja notas que ve el equipo.
+- acm (Apple Care Manager): ve todos los casos, Abastecimiento e Indicadores. No edita, pero deja notas que ve el equipo.
   No ve precios, compras en Miami, guías, correos, cargas ni administración. De los comentarios del equipo
   solo ve los marcados como "compartido con Apple".
 - tienda: solo ve "Mis casos" de los ship-to que se le asignen, con estado y fecha tentativa.
@@ -112,7 +112,7 @@ def comentarios(conn, user, key) -> list:
 
 
 def gestion(user, filas: list) -> list:
-    """Historial de gestión del equipo: Jenny solo ve estado, propuesta, aprobación y fechas, sin el origen."""
+    """Historial de gestión del equipo: la ACM solo ve estado, propuesta, aprobación y fechas, sin el origen."""
     if user["role"] != "acm":
         return filas
     import json

@@ -52,7 +52,7 @@ ni a Apple: los archivos se cargan a mano.
 El control está en el servidor. Cada petición se valida contra lo que su rol puede hacer, y la pantalla solo
 muestra lo permitido.
 
-| Acción | Administrador | Editor (torre de control) | Lector | Apple Care Manager | Tienda |
+| Acción | Administrador | Editor (torre de control) | Lector (jefatura) | Apple Care Manager | Tienda |
 |---|:-:|:-:|:-:|:-:|:-:|
 | Ver casos, guías, indicadores | Sí | Sí | Sí | Casos, Abastecimiento e Indicadores | Solo sus casos |
 | Ver precios y valor del backlog | Sí | Sí | Sí | No | No |
@@ -69,7 +69,8 @@ muestra lo permitido.
 | Exportar CSV | Sí | Sí | Sí | No | No |
 | Usuarios, parámetros, festivos, bitácora, correos de tiendas | Sí | No | No | No | No |
 
-Detalle de los roles externos:
+Los usuarios internos son el administrador (Planeación), los editores (torre de control) y los lectores
+(jefatura, solo consulta). Detalle de los roles externos:
 
 - **Apple Care Manager (ACM)**
   - **Qué ve:** todos los casos y sus fechas y alertas operativas.
@@ -262,7 +263,10 @@ Dependencias (`requirements.txt`): FastAPI, Uvicorn, pandas, openpyxl, defusedxm
 
 ## 9. Pruebas
 
-`tests/test_flujo.py` recorre el flujo completo con archivos reales en una base temporal (requiere `pip install httpx`):
+`tests/test_flujo.py` recorre el flujo completo con un backlog y un KGB reales, en una base temporal que no toca
+`data/` (requiere `pip install httpx`). Valida login y CSRF, cargas y rechazo de archivos repetidos o viejos,
+cruce con el KGB, gestión, guías, correos, roles (lector, editor, ACM y tienda), fechas protegidas con
+solicitud al administrador, bloqueo por intentos fallidos y bitácora de solo lectura:
 
 ```
 python tests/test_flujo.py <backlog.xlsx> <kgb.xlsx>

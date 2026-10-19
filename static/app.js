@@ -803,7 +803,7 @@ function bloqueMiami(c) {
         part: h('input', { value: c.assembly || '', maxlength: 40 }), po: h('input', { maxlength: 60 }),
         eta: h('input', { type: 'date' }), notas: h('input', { maxlength: 500 }),
       };
-      caja.append(h('p', { class: 'nota' }, c.option_jenny === 'Miami' ? 'Jenny indicó Miami y no hay compra registrada.' : 'Sin compra en Miami.',
+      caja.append(h('p', { class: 'nota' }, c.option_jenny === 'Miami' ? 'La ACM indicó Miami y no hay compra registrada.' : 'Sin compra en Miami.',
         ` Si deja la llegada vacía, se calcula como la compra + ${r.lead_dias} días.`),
       h('div', { class: 'form' },
         h('label', { class: 'campo' }, 'Fecha de compra', g.fecha_compra), h('label', { class: 'campo' }, 'Cantidad', g.cantidad),
@@ -1135,7 +1135,7 @@ async function panelInventario() {
   caja.append(...[h('p', {}, `Archivo del ${fecha(r.fecha)}: ${unid(r.unidades)} unidades de ${r.partes} partes. Las unidades se reparten por prioridad (OH, Super ASP y luego la ETA más cercana; si se acaba la parte, se usa el sustituto oficial). "Con inventario desde" cuenta las cargas seguidas en que la parte tuvo unidades.`),
     h('div', { class: 'tira' },
       cifra(r.casos.length, 'casos que se pueden despachar con inventario propio', r.casos.length ? 'alerta-cifra' : ''),
-      cifra(r.oh_sin_inventario.length, 'casos OH de Jenny sin unidades en el inventario', r.oh_sin_inventario.length ? 'alerta-cifra' : '')),
+      cifra(r.oh_sin_inventario.length, 'casos OH (según la ACM) sin unidades en el inventario', r.oh_sin_inventario.length ? 'alerta-cifra' : '')),
     r.casos.length ? h('div', { class: 'marco' }, h('table', { class: 'mini' },
       h('thead', {}, h('tr', {}, ['Caso', 'Tienda', 'Parte', 'Solución', 'ETA Apple', 'Límite', 'Con inventario desde', 'Días hábiles'].map((t) => h('th', {}, t)))),
       h('tbody', {}, r.casos.slice(0, 300).map((x) => h('tr', {}, h('td', {}, abrir(x.key_notif)), h('td', {}, x.tienda),

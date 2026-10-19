@@ -41,7 +41,7 @@ OO_REQUIRED = ["Sales Ord#", "Item", "Material Num", "Remaining Qty", "Status", 
 OO_KNOWN = {"cust num", "customer name", "sales ord#", "ref/web #", "cust.req.date", "del blk", "ord entry date",
             "cust. po num.", "item", "plant", "material num", "material desc", "ord qty", "shpd qty", "delivery qty",
             "remaining qty", "scheduled qty", "sch line blocked for delv", "status", "recovery eta",
-            # columnas de apoyo que Ferxxo agrega a mano en algunos archivos
+            # columnas de apoyo que se agregan a mano en algunos archivos
             "llave", "to do lo que esta en backorder", "ref/web #/material num"}
 SIN_ABASTO = ("OH", "FG", "Substitute Upgrade or/and Color change")   # soluciones que no esperan esta parte
 

@@ -7,7 +7,7 @@ Cantidad, Qty…) y, si vienen, bodega y descripción. El encabezado puede estar
 Con el inventario cargado, las unidades se reparten entre los casos pendientes por prioridad
 (OH primero, luego Super ASP, luego la ETA más cercana; si la parte se acaba, se usa el sustituto oficial):
 - caso con unidad asignada: "se puede despachar con inventario propio" y su llegada pasa a ser la fecha del archivo;
-- caso OH de Jenny sin unidad asignada: alerta "OH sin inventario";
+- caso que la ACM marca OH y no tiene unidad asignada: alerta "OH sin inventario";
 - la vista de Abastecimiento muestra desde cuándo había inventario (para ver lo que se debió despachar).
 """
 import hashlib
@@ -145,7 +145,7 @@ def alertas(c, ctx, inv) -> list:
                  "text": f"Hay inventario propio de {inv['parte']}{extra} en el archivo del {fecha}: este caso se puede despachar."}]
     if opt == "OH" and not inv and not c.get("fecha_recepcion"):
         return [{"code": "INV_OH_SIN_STOCK", "level": "ambar",
-                 "text": f"Jenny lo marca OH, pero el inventario del {fecha} no tiene unidades libres de esta parte."}]
+                 "text": f"La ACM lo marca OH, pero el inventario del {fecha} no tiene unidades libres de esta parte."}]
     return []
 
 
