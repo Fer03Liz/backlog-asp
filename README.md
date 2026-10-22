@@ -10,8 +10,8 @@ Cada día se cargan los reportes de Apple y el tablero hace cuatro cosas:
 3. **Marca alertas.** Ordena los casos por prioridad y señala los que están en riesgo.
 4. **Registra la gestión.** Guarda lo que hace el equipo: recepción, despacho, comentarios, solicitudes y aprobaciones.
 
-Es una sola aplicación con su base de datos en un archivo. No usa servicios en la nube ni se conecta a SAP
-ni a Apple: los archivos se cargan a mano.
+Es una sola aplicación con su base de datos en SQL Server (esquema propio `backlog`). No usa servicios en la
+nube ni se conecta a SAP ni a Apple: los archivos se cargan a mano.
 
 ---
 
@@ -91,9 +91,13 @@ Los usuarios internos son el administrador (Planeación), los editores (torre de
 
 ### Motor y ubicación
 
-- **Motor:** SQLite en modo WAL, en un solo archivo: `data/backlog.db`. Es SQL estándar y no necesita un servidor de base de datos aparte.
-- **Arranque:** al iniciar, la app crea las tablas que falten y agrega las columnas nuevas (migraciones automáticas). Nunca borra datos.
-- **Confidencialidad:** `data/` contiene información confidencial y está excluida del repositorio (`.gitignore`), igual que cualquier `.db`, `.xlsx`, `.csv` o `.eml`.
+- **Motor:** SQL Server (probado en SQL Server 2019) con el controlador `pymssql` y el pool de conexiones de SQLAlchemy. No requiere ODBC.
+- **Conexión:** la cadena va en la variable `SQL_SERVER_STRING_CONNECTION` del archivo `.env` (formato SQLAlchemy, `mssql+pymssql://usuario:clave@servidor:1433/base`). El `.env` está excluido del repositorio; `.env.example` sirve de plantilla.
+- **Esquema:** todas las tablas viven en el esquema `backlog` (variable `BACKLOG_DB_SCHEMA`), así la app no toca objetos de otros esquemas de la base.
+- **Arranque:** al iniciar, la app crea el esquema, las tablas, índices y triggers que falten y agrega las columnas nuevas (lista `MIGRACIONES` en `infrastructure/esquema.py`). Nunca borra datos.
+- **Fechas:** se guardan como texto ISO (`AAAA-MM-DD`), igual que en la versión SQLite, para no cambiar comparaciones ni la API.
+- **Latencia:** el servidor está a unos 120 ms por viaje. Las escrituras masivas viajan en lotes y las lecturas de cada pantalla en un solo viaje; una carga de backlog de 3.000 líneas toma unos 20 s. Conviene instalar la app en un servidor cercano a la base.
+- **Confidencialidad:** los archivos de datos (`.xlsx`, `.csv`, `.eml`, `.db`) y el `.env` están excluidos del repositorio (`.gitignore`).
 
 ### Tablas (26)
 
@@ -116,13 +120,13 @@ Los usuarios internos son el administrador (Planeación), los editores (torre de
 
 ### Respaldos
 
-- **Automáticos:** antes de cada carga de backlog, KGB y Open Orders se guarda una copia consistente en `data/backups/`, y se conservan las 30 últimas.
-- **Restaurar:** basta con cerrar la app y reemplazar `data/backlog.db` por la copia elegida.
+- **Los hace SQL Server:** los respaldos y la restauración quedan en la política de TI para la base. La app ya no copia archivos antes de cada carga.
+- **Cargas atómicas:** cada carga corre en una transacción; si falla, no queda nada a medias.
 
 ### Uso desde otras herramientas
 
-- **Power BI:** se puede leer en modo lectura con un controlador ODBC de SQLite. También se puede usar la exportación CSV de la pantalla Casos.
-- **Migrar a SQL Server o PostgreSQL:** es posible. Se ajustan unas 30 consultas propias de SQLite (insertar o reemplazar, lectura de estructura, triggers y migraciones) y se copian los datos.
+- **Power BI:** se conecta directo a SQL Server (esquema `backlog`), de preferencia con un usuario de solo lectura. También se puede usar la exportación CSV de la pantalla Casos.
+- **Migrar los datos de la versión SQLite:** `poetry run backlog-migrar-sqlite RUTA\data\backlog.db` copia todas las tablas (con sus id) al esquema configurado. Se niega si el esquema ya tiene datos y lo hace todo en una transacción.
 
 ---
 
@@ -176,37 +180,42 @@ Super ASP (estrategia Z8.2) desempata.
 - **Navegador:** política de seguridad de contenido (CSP) estricta, sin scripts externos ni en línea. La interfaz nunca inserta datos como HTML.
 - **Archivos:** hasta 25 MB, solo `.xlsx` o `.csv`, leídos en memoria con protección contra XML malicioso.
 - **Exportación:** el CSV exportado neutraliza fórmulas para que Excel no las ejecute.
-- **Bitácora:** de solo lectura. Registra ingresos, cargas, cambios, correos, solicitudes, aprobaciones y administración.
+- **Bitácora:** de solo lectura (triggers `INSTEAD OF UPDATE, DELETE`). Registra ingresos, cargas, cambios, correos, solicitudes, aprobaciones y administración.
+- **Credenciales de la base:** solo en el `.env`, nunca en el código ni en Git. Se recomienda una cuenta propia para la app con permisos solo sobre el esquema `backlog`.
 
 ---
 
 ## 6. Instalación y operación
 
-**En un equipo (Windows).** Requiere Python 3.10 o superior.
+**En un equipo (Windows).** Requiere Python 3.10 o superior (probado en 3.10, 3.11 y 3.14.8) y
+[Poetry](https://python-poetry.org) 2.x.
 
 1. Copiar la carpeta a un lugar fijo, por ejemplo `C:\Herramientas\Backlog\backlog-asp`.
-2. Doble clic en `iniciar.bat`. La primera vez crea el entorno, instala dependencias y pide crear el
-   usuario administrador.
-3. Abrir http://127.0.0.1:8765.
+2. Copiar `.env.example` como `.env` y poner la cadena de conexión a SQL Server.
+3. Doble clic en `iniciar.bat`. Instala Poetry si falta, instala las dependencias en `.venv` y, la primera vez,
+   pide crear el usuario administrador.
+4. Abrir http://127.0.0.1:8765.
 
 Equivalente en consola:
 
 ```
-python -m venv .venv
-.venv\Scripts\activate
-pip install -r requirements.txt
-python scripts\crear_admin.py
-python run.py
+poetry install                 # crea .venv con las versiones exactas de poetry.lock
+poetry run backlog-admin       # crea el administrador (y el esquema si no existe)
+poetry run backlog-asp         # inicia el tablero
 ```
+
+Para usar otra versión de Python: `poetry env use C:\ruta\python.exe` y luego `poetry install`. El
+`poetry.lock` ya trae las versiones correctas de cada dependencia para 3.10 a 3.14.
 
 **En un servidor (para que la use el equipo).** Lo hace TI:
 
-1. Instalar en un servidor o máquina virtual interna, como servicio, con Python y `requirements.txt`. 1–2 vCPU y 2 GB de RAM son suficientes.
-2. Publicarla detrás de un proxy inverso con HTTPS (IIS, nginx u otro) y definir `BACKLOG_COOKIE_SECURE=1`.
+1. Instalar en un servidor o máquina virtual interna, como servicio, con Python, Poetry y `poetry install --only main`.
+   1–2 vCPU y 2 GB de RAM son suficientes. Mejor en la misma red del SQL Server, por la latencia.
+2. Definir el `.env` (o las mismas variables de entorno del servicio).
+3. Publicarla detrás de un proxy inverso con HTTPS (IIS, nginx u otro) y definir `BACKLOG_COOKIE_SECURE=1`.
    El proxy es lo único que llega a `127.0.0.1:8765`.
-3. Respaldar `data/` según la política de TI.
 
-No cambie `HOST` en `app/config.py` para abrirla a la red sin HTTPS: las contraseñas viajarían en claro.
+No cambie `HOST` en `src/backlog_asp/config.py` para abrirla a la red sin HTTPS: las contraseñas viajarían en claro.
 
 **Archivos que se cargan.**
 
@@ -237,39 +246,62 @@ No cambie `HOST` en `app/config.py` para abrirla a la red sin HTTPS: las contras
 
 ---
 
-## 8. Estructura del código
+## 8. Estructura del código (arquitectura limpia)
+
+Cada capa solo depende de las de adentro: `presentation` → `application` → `domain`. La infraestructura
+implementa el puerto de persistencia (`application/puertos.py`) y la presentación la conecta con los casos de uso.
 
 ```
-app/
-  main.py            rutas HTTP, cabeceras de seguridad, cargas, correos, exportación
-  security.py        contraseñas, sesiones, bloqueo
-  acceso.py          roles externos (ACM y tienda) y filtros de datos
-  logic.py           fechas, cruce con el KGB, alertas, prioridad e indicadores
-  ingest.py          carga de backlog, precios, Parts Data y tiendas
-  abastecimiento.py  carga de KGB y Open Orders, abastecimiento por parte
-  inventario.py      carga del inventario propio y asignación a casos
-  miami.py           compras en Miami
-  tiendas.py         asociación de tiendas del backlog con el archivo de tiendas
-  gestion.py         cambios de casos, fechas protegidas, solicitudes, avisos y selección múltiple
-  db.py              esquema, migraciones, bitácora y respaldos
-  config.py          parámetros y constantes
-static/              interfaz: HTML, CSS y JavaScript sin librerías externas
-scripts/             crear_admin.py
-tests/               prueba de punta a punta
-data/                se crea al iniciar: base y respaldos (no se versiona)
+src/backlog_asp/
+  domain/                  reglas de negocio puras (sin base de datos ni HTTP)
+    calendario.py          días hábiles y festivos de Colombia
+    partes.py              números de parte, guías y soluciones de Apple
+    casos.py               cruce con el KGB, fechas, alertas, precio y prioridad de un caso
+    gestion.py             validación, fechas protegidas y reglas entre campos
+    abastecimiento.py      reglas de Open Orders (recovery, tipo de orden)
+    tiendas.py             comparación de nombres de tiendas
+    seguridad.py           contraseñas (scrypt) y tokens
+    catalogos.py           estados, roles y parámetros por defecto
+    errores.py             errores de negocio con su código HTTP
+  application/             casos de uso
+    puertos.py             interfaz de la conexión que necesitan los casos de uso
+    contexto.py            foto de datos por petición y listado de casos
+    cargas.py              carga de backlog, precios, Parts Data y tiendas
+    abastecimiento.py      carga de KGB y Open Orders, abastecimiento por parte
+    inventario.py          carga del inventario propio y asignación a casos
+    gestion.py             cambios, solicitudes, avisos y selección múltiple
+    casos.py               detalle, comentarios, guías y exportación
+    correos.py, indicadores.py, miami.py, tiendas.py, acceso.py, sesiones.py, administracion.py
+    archivos.py            lectura de xlsx/csv
+    auditoria.py           bitácora y parámetros
+  infrastructure/
+    database.py            SQL Server: pool, lotes de escritura, varias lecturas en un viaje
+    esquema.py             tablas, índices, triggers y migraciones en T-SQL
+  presentation/
+    api/app.py             FastAPI: cabeceras de seguridad, errores y páginas
+    api/dependencias.py    conexión por petición, sesión, CSRF y roles
+    api/routers/           rutas HTTP por área
+    static/                interfaz: HTML, CSS y JavaScript sin librerías externas
+  cli/                     backlog-admin y backlog-migrar-sqlite
+  config.py                variables de entorno (.env)
+tests/                     prueba de punta a punta contra SQL Server
 ```
 
-Dependencias (`requirements.txt`): FastAPI, Uvicorn, pandas, openpyxl, defusedxml y python-multipart.
+Dependencias (`pyproject.toml`, versiones fijas en `poetry.lock`): FastAPI, Uvicorn, pandas, numpy, openpyxl,
+defusedxml, python-multipart, SQLAlchemy, pymssql y python-dotenv.
 
 ## 9. Pruebas
 
-`tests/test_flujo.py` recorre el flujo completo con un backlog y un KGB reales, en una base temporal que no toca
-`data/` (requiere `pip install httpx`). Valida login y CSRF, cargas y rechazo de archivos repetidos o viejos,
-cruce con el KGB, gestión, guías, correos, roles (lector, editor, ACM y tienda), fechas protegidas con
-solicitud al administrador, bloqueo por intentos fallidos y bitácora de solo lectura:
+`tests/test_flujo.py` recorre el flujo completo contra SQL Server en un esquema temporal (`backlog_test_…`)
+que se borra al terminar: nunca toca el esquema `backlog`. Genera un backlog, KGB, Open Orders, precios,
+tiendas e inventario de prueba. Valida login y CSRF, cargas y rechazo de archivos repetidos o viejos,
+cruce con el KGB, gestión, guías, correos, compras en Miami, selección múltiple, roles (lector, editor, ACM y
+tienda), fechas protegidas con solicitud al administrador, bloqueo por intentos fallidos y que la bitácora y los
+comentarios no se pueden borrar:
 
 ```
-python tests/test_flujo.py <backlog.xlsx> <kgb.xlsx>
+poetry run pytest
 ```
 
+Para probar con archivos reales: definir `BACKLOG_TEST_BACKLOG` y `BACKLOG_TEST_KGB` con sus rutas.
 La variable `BACKLOG_HOY` fija la fecha de "hoy" y existe solo para pruebas.

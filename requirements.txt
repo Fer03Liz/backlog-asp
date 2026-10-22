@@ -1,7 +1,0 @@
-# Python 3.10 o superior
-fastapi>=0.110
-uvicorn>=0.29
-pandas>=2.0
-openpyxl>=3.1
-defusedxml>=0.7        # openpyxl lo usa para leer Excel sin riesgo de bombas XML
-python-multipart>=0.0.9

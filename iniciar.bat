@@ -1,13 +1,18 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if not exist .venv (
-  echo Creando entorno virtual...
-  py -3 -m venv .venv 2>nul || python -m venv .venv
+where poetry >nul 2>nul
+if errorlevel 1 (
+  echo Instalando Poetry...
+  py -3 -m pip install --user -q poetry 2>nul || python -m pip install --user -q poetry
 )
-call .venv\Scripts\activate.bat
+if not exist .env (
+  echo Falta el archivo .env con la conexion a SQL Server. Copie .env.example como .env y complete los datos.
+  pause
+  exit /b 1
+)
 echo Revisando dependencias...
-python -m pip install -q --disable-pip-version-check -r requirements.txt
-python scripts\crear_admin.py --si-no-hay
-python run.py
+poetry install --only main -q
+poetry run backlog-admin --si-no-hay
+poetry run backlog-asp
 pause

@@ -1,0 +1,39 @@
+[project]
+name = "backlog-asp"
+version = "2.0.0"
+description = "Tablero de backlog de repuestos de Apple (ASP) para Ingram Micro Colombia"
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "python-multipart>=0.0.18",
+    "pandas>=2.2.3,<3",       # pandas 3 cambia los textos vacíos (pd.NA) y la copia de datos
+    # numpy no tiene una sola versión con ruedas para 3.10 y 3.14: se elige según el Python
+    "numpy>=2.2,<2.3; python_version < '3.11'",
+    "numpy>=2.3.4; python_version >= '3.11'",
+    "openpyxl>=3.1",
+    "defusedxml>=0.7",        # openpyxl lo usa para leer Excel sin riesgo de bombas XML
+    "sqlalchemy>=2.0.36",     # pool de conexiones y lectura de la cadena de conexión
+    "pymssql>=2.3.4",         # controlador de SQL Server (ruedas para Windows y Linux, sin ODBC)
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+backlog-asp = "backlog_asp.__main__:main"
+backlog-admin = "backlog_asp.cli.crear_admin:main"
+backlog-migrar-sqlite = "backlog_asp.cli.migrar_sqlite:main"
+
+[tool.poetry]
+packages = [{ include = "backlog_asp", from = "src" }]
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.3"
+httpx = ">=0.27"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[build-system]
+requires = ["poetry-core>=2.0"]
+build-backend = "poetry.core.masonry.api"
