@@ -78,10 +78,9 @@ def app():
     try:
         esquema.init_db(conn)
         sesiones.create_user(conn, "admin.test", "Admin Prueba", "ClaveSegura2026", "admin", must_change=False)
-        sesiones.create_user(conn, "lector.test", "Lector", "ClaveLectura2026", "lector", must_change=False)
-        sesiones.create_user(conn, "editor.test", "Editor", "ClaveEditor2026", "editor", must_change=False)
-        sesiones.create_user(conn, "acm.test", "ACM", "ClaveAcm20261", "acm", must_change=False)
-        sesiones.create_user(conn, "tienda.test", "Tienda", "ClaveTienda2026", "tienda", must_change=False)
+        sesiones.create_user(conn, "atencion.test", "Atención", "ClaveAtencion2026", "atencion", must_change=False)
+        sesiones.create_user(conn, "comprador.test", "Comprador", "ClaveCompra2026", "comprador", must_change=False)
+        sesiones.create_user(conn, "supervisor.test", "Supervisor", "ClaveSuperv2026", "supervisor", must_change=False)
         conn.commit()
     finally:
         conn.close()
@@ -165,7 +164,7 @@ def test_flujo_completo(app):
     assert c.post("/api/emails-lote", headers=H).status_code == 200
     for url in ("/api/kpis", "/api/supply", "/api/kgb-colombia", "/api/miami", "/api/inventario/resumen", "/api/loads",
                 "/api/settings", "/api/audit?limit=50", "/api/avisos", "/api/solicitudes", "/api/tiendas-alias",
-                "/api/tiendas-disponibles", "/api/users", "/api/lotes", "/api/templates/precios"):
+                "/api/users", "/api/lotes", "/api/templates/precios"):
         assert c.get(url).status_code == 200, url
     parte = casos[0]["assembly"]
     assert c.get(f"/api/supply/{parte}").status_code == 200
@@ -191,10 +190,29 @@ def test_flujo_completo(app):
     assert r.status_code == 200 and r.json()["comentarios"] == 5, r.text
     assert c.post(f"/api/lote/{r.json()['id']}/deshacer", headers=H).json()["casos"] == 5
 
-    # Lector no edita; editor registra el despacho una vez y pide el cambio al administrador
-    cl, hl = entrar(app, "lector.test", "ClaveLectura2026")
+    # Estados nuevos y novedad en despacho (se deja el caso como estaba); "Fecha a comunicar" ya no existe
+    assert {"En cotización", "En autorización", "En tránsito por Miami", "Entregado"} <= set(me["estados"])
+    kn = claves[0]
+    antes = c.get(f"/api/cases/{kn}").json()["caso"]["estado"]
+    assert c.patch(f"/api/cases/{kn}", json={"estado": "En cotización", "novedad_despacho": "Caja golpeada"}, headers=H).status_code == 200
+    dn = c.get(f"/api/cases/{kn}").json()["caso"]
+    assert dn["estado"] == "En cotización" and dn["novedad_despacho"] == "Caja golpeada"
+    assert c.patch(f"/api/cases/{kn}", json={"estado": "Cotización enviada"}, headers=H).status_code == 422
+    assert c.patch(f"/api/cases/{kn}", json={"estado": antes, "novedad_despacho": ""}, headers=H).status_code == 200
+
+    # Atención no edita casos ni carga archivos de otros; el comprador registra el despacho una vez y pide el cambio;
+    # el supervisor aprueba (el comprador no) y la administración sigue siendo solo del admin
+    cl, hl = entrar(app, "atencion.test", "ClaveAtencion2026")
     assert cl.patch(f"/api/cases/{key}", json={"estado": "Despachado"}, headers=hl).status_code == 403
-    ce, he = entrar(app, "editor.test", "ClaveEditor2026")
+    assert cl.post("/api/upload/kgb", files={"file": ("kgb.csv", b"a,b\n1,2")}, headers=hl).status_code == 403
+    assert cl.get("/api/users").status_code == 403
+    perfil_a = cl.get("/api/me").json()
+    assert perfil_a["puede_correos"] and not perfil_a["puede_editar"] and perfil_a["cargas"] == ["shipto"]
+    assert cl.get("/api/emails").status_code == 200 and cl.get("/api/tienda/casos").status_code == 404
+    assert cl.post(f"/api/cases/{key}/comments", json={"text": "Nota de atención"}, headers=hl).status_code == 200
+    ce, he = entrar(app, "comprador.test", "ClaveCompra2026")
+    assert ce.get("/api/me").json()["puede_editar"] and not ce.get("/api/me").json()["puede_aprobar"]
+    assert ce.post(f"/api/emails/{ship}", json={"formato": "eml"}, headers=he).status_code == 403
     k2 = next(x["key_notif"] for x in c.get("/api/cases").json()["casos"] if not x["fecha_despacho"] and x["key_notif"] not in claves)
     assert ce.patch(f"/api/cases/{k2}", json={"fecha_despacho": me["hoy"]}, headers=he).status_code == 200
     otra = (HOY + timedelta(days=1)).isoformat()
@@ -203,23 +221,25 @@ def test_flujo_completo(app):
                                                       "motivo": "Prueba: se digitó mal la fecha"}, headers=he)
     assert r.status_code == 200, r.text
     assert ce.post(f"/api/solicitudes/{r.json()['id']}/resolver", json={"aprobar": True}, headers=he).status_code == 403
-    assert c.post(f"/api/solicitudes/{r.json()['id']}/resolver", json={"aprobar": True}, headers=H).status_code == 200
+    cs, hs = entrar(app, "supervisor.test", "ClaveSuperv2026")
+    assert cs.get("/api/avisos").json()["solicitudes"], "el supervisor ve las solicitudes pendientes"
+    assert cs.post(f"/api/solicitudes/{r.json()['id']}/resolver", json={"aprobar": True}, headers=hs).status_code == 200
     assert c.get(f"/api/cases/{k2}").json()["caso"]["fecha_despacho"] == otra
+    assert cs.get("/api/users").status_code == 403 and cs.get("/api/settings").status_code == 200
+    assert cs.patch(f"/api/cases/{k2}", json={"fecha_despacho": me["hoy"]}, headers=hs).status_code == 200   # supervisor sí puede
+    assert c.get("/api/me").json()["roles"] == ["admin", "supervisor", "comprador", "atencion"]
+    assert c.post("/api/users", json={"username": "x.acm", "full_name": "x", "password": "ClaveXacm20261", "role": "acm"}, headers=H).status_code == 422
 
-    # ACM: notas con aviso al equipo, sin precios; tienda: solo su pantalla
-    ca, ha = entrar(app, "acm.test", "ClaveAcm20261")
-    assert ca.patch(f"/api/cases/{k2}", json={"estado": "Nuevo"}, headers=ha).status_code == 403
-    assert ca.get("/api/emails").status_code == 403
-    assert all(x["precio"] is None for x in ca.get("/api/cases").json()["casos"])
-    assert ca.post(f"/api/cases/{k2}/comments", json={"text": "Nota de prueba de la ACM"}, headers=ha).status_code == 200
-    av = c.get("/api/avisos").json()
-    assert av["total"] >= 1
-    assert c.post("/api/avisos/leidas", json={"ids": [n["id"] for n in av["notas"]]}, headers=H).json()["marcadas"] >= 1
-    uid = next(u["id"] for u in c.get("/api/users").json() if u["username"] == "tienda.test")
-    assert c.put(f"/api/users/{uid}/tiendas", json={"ship_tos": [ship]}, headers=H).status_code == 200
-    ct, _ = entrar(app, "tienda.test", "ClaveTienda2026")
-    assert ct.get("/api/cases").status_code == 403
-    assert ct.get("/api/tienda/casos").json()["casos"]
+    # caso_calculado (la que lee Power BI): una fila por caso y con estado de la tienda
+    from backlog_asp.application import calculado
+    conn = database.connect()
+    try:
+        n = calculado.refrescar(conn)
+        fila = conn.execute("SELECT * FROM caso_calculado WHERE key_notif=?", (k2,)).fetchone()
+        assert n >= len(claves) and fila["estado_tienda"] in ("Despachado", "Entregado") and fila["fecha_despacho"]
+        assert conn.execute("SELECT COUNT(*) n FROM caso_calculado").fetchone()["n"] == n
+    finally:
+        conn.close()
 
     # Segundo día: salen 10 casos, cambian 5 ETA y entra 1 nuevo
     if not real_b:
@@ -237,8 +257,8 @@ def test_flujo_completo(app):
     # Bloqueo tras intentos fallidos
     x = TestClient(app)
     for _ in range(5):
-        x.post("/api/login", json={"username": "lector.test", "password": "incorrecta"})
-    assert x.post("/api/login", json={"username": "lector.test", "password": "ClaveLectura2026"}).status_code == 423
+        x.post("/api/login", json={"username": "atencion.test", "password": "incorrecta"})
+    assert x.post("/api/login", json={"username": "atencion.test", "password": "ClaveAtencion2026"}).status_code == 423
 
     # Bitácora y comentarios no se pueden borrar
     conn = database.connect()

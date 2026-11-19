@@ -4,8 +4,8 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import Response
 
 from .... import config
-from ....application import abastecimiento, administracion, cargas, inventario, tiendas
-from ..dependencias import EDITORS, current_user, date_or_none, get_db
+from ....application import abastecimiento, acceso, administracion, calculado, cargas, inventario, tiendas
+from ..dependencias import INTERNOS, current_user, date_or_none, get_db
 
 router = APIRouter()
 
@@ -26,14 +26,17 @@ def _cargar(conn, kind, data, name, fecha, user) -> dict:
     if kind in ("backlog", "shipto"):
         result["tiendas_asociadas"] = tiendas.asociar_automatico(conn, user)
     conn.commit()
+    calculado.programar()                  # Power BI lee `caso_calculado`: se actualiza poco después de cada carga
     return result
 
 
 @router.post("/api/upload/{kind}")
 async def upload(kind: str, file: UploadFile = File(...), fecha: str | None = Form(None),
-                 user=Depends(EDITORS), conn=Depends(get_db)):
+                 user=Depends(INTERNOS), conn=Depends(get_db)):
     if kind not in CARGADORES:
         raise HTTPException(404, "Tipo de archivo no reconocido.")
+    if not acceso.puede_cargar(user["role"], kind):
+        raise HTTPException(403, "Su rol no carga este archivo.")
     name = (file.filename or "archivo").replace("\\", "/").split("/")[-1][:200]
     if not name.lower().endswith((".xlsx", ".xlsm", ".csv")):
         raise HTTPException(400, "Formato no admitido. Use .xlsx o .csv.")

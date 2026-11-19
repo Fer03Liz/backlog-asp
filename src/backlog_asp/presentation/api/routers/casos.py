@@ -3,8 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
-from ....application import acceso, casos, contexto, gestion
-from ..dependencias import EDITORS, current_user, date_or_none, get_db, require
+from ....application import casos, contexto, gestion
+from ..dependencias import EDITORS, INTERNOS, current_user, date_or_none, get_db
 
 router = APIRouter()
 
@@ -13,7 +13,7 @@ router = APIRouter()
 def list_cases(incluir_cerrados: int = 0, user=Depends(current_user), conn=Depends(get_db)):
     ctx = contexto.Context(conn)
     return {"hoy": ctx.today.isoformat(), "kgb_fecha": ctx.kgb_date,
-            "casos": [acceso.caso(user, c) for c in contexto.load_cases(conn, ctx, include_closed=bool(incluir_cerrados))]}
+            "casos": contexto.load_cases(conn, ctx, include_closed=bool(incluir_cerrados))}
 
 
 @router.get("/api/export/cases.csv")
@@ -35,7 +35,7 @@ class CaseUpdate(BaseModel):
     responsable: str | None = Field(None, max_length=80)
     fecha_recepcion: str | None = None
     fecha_despacho: str | None = None
-    fecha_objetivo: str | None = None
+    novedad_despacho: str | None = Field(None, max_length=500)
     propuesta: str | None = None
     aprobacion_kam: str | None = None
 
@@ -49,11 +49,11 @@ def update_case(key: str, body: CaseUpdate, user=Depends(EDITORS), conn=Depends(
 
 class CommentIn(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
-    visibilidad: str = "interno"     # interno = solo el equipo; compartido = también lo ve el Apple Care Manager
+    visibilidad: str = "interno"     # sin uso externo: la ACM ya no entra a la app
 
 
 @router.post("/api/cases/{key}/comments")
-def add_comment(key: str, body: CommentIn, user=Depends(require("admin", "editor", "acm")), conn=Depends(get_db)):
+def add_comment(key: str, body: CommentIn, user=Depends(INTERNOS), conn=Depends(get_db)):
     casos.comentar(conn, user, key, body.text, body.visibilidad)
     conn.commit()
     return {"ok": True}

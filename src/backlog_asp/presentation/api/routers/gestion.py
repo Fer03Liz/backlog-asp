@@ -3,7 +3,7 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
 from ....application import gestion
-from ..dependencias import ADMINS, EDITORS, INTERNOS, get_db
+from ..dependencias import APROBADORES, EDITORS, INTERNOS, get_db
 
 router = APIRouter()
 
@@ -32,7 +32,7 @@ class ResolverIn(BaseModel):
 
 
 @router.post("/api/solicitudes/{sid}/resolver")
-def solicitud_resolver(sid: int, body: ResolverIn, user=Depends(ADMINS), conn=Depends(get_db)):
+def solicitud_resolver(sid: int, body: ResolverIn, user=Depends(APROBADORES), conn=Depends(get_db)):
     gestion.resolver(conn, user, sid, body.aprobar, body.respuesta)
     conn.commit()
     return {"ok": True}
@@ -41,18 +41,6 @@ def solicitud_resolver(sid: int, body: ResolverIn, user=Depends(ADMINS), conn=De
 @router.get("/api/avisos")
 def avisos(user=Depends(INTERNOS), conn=Depends(get_db)):
     return gestion.avisos(conn, user)
-
-
-class LeidasIn(BaseModel):
-    ids: list[int] | None = None
-    key: str | None = None
-
-
-@router.post("/api/avisos/leidas")
-def avisos_leidas(body: LeidasIn, user=Depends(INTERNOS), conn=Depends(get_db)):
-    n = gestion.marcar_leidas(conn, user, body.ids, body.key)
-    conn.commit()
-    return {"ok": True, "marcadas": n}
 
 
 class LoteIn(BaseModel):

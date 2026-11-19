@@ -4,7 +4,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ....application import administracion, contexto, correos
-from ..dependencias import EDITORS, current_user, get_db
+from ..dependencias import CORREOS, current_user, get_db
 
 router = APIRouter()
 
@@ -20,7 +20,7 @@ class EmailIn(BaseModel):
 
 
 @router.post("/api/emails/{ship_to}")
-def email_register(ship_to: str, body: EmailIn, user=Depends(EDITORS), conn=Depends(get_db)):
+def email_register(ship_to: str, body: EmailIn, user=Depends(CORREOS), conn=Depends(get_db)):
     ctx = contexto.Context(conn)
     group = next((g for g in correos.email_groups(conn, ctx, correos.signature(conn, user)) if g["ship_to"] == ship_to), None)
     if not group:
@@ -34,7 +34,7 @@ def email_register(ship_to: str, body: EmailIn, user=Depends(EDITORS), conn=Depe
 
 
 @router.post("/api/emails-lote")
-def email_batch(user=Depends(EDITORS), conn=Depends(get_db)):
+def email_batch(user=Depends(CORREOS), conn=Depends(get_db)):
     """Todos los correos del día en un .zip (solo tiendas con correo registrado)."""
     ctx = contexto.Context(conn)
     groups = [g for g in correos.email_groups(conn, ctx, correos.signature(conn, user)) if g["email"]]
@@ -52,7 +52,7 @@ class ShipToIn(BaseModel):
 
 
 @router.put("/api/shipto/{ship_to}")
-def update_shipto(ship_to: str, body: ShipToIn, user=Depends(EDITORS), conn=Depends(get_db)):
+def update_shipto(ship_to: str, body: ShipToIn, user=Depends(CORREOS), conn=Depends(get_db)):
     administracion.guardar_tienda(conn, user, ship_to, body.email, body.city)
     conn.commit()
     return {"ok": True}

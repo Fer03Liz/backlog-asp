@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ... import config
 from ...domain.errores import ErrorNegocio
+from ...application import calculado
 from ...infrastructure import database, esquema
 from .routers import abastecimiento, admin, auth, cargas, casos, correos, gestion, tiendas
 
@@ -26,6 +27,7 @@ def preparar_base() -> None:
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
     preparar_base()
+    calculado.programar()                  # deja caso_calculado al día al arrancar
     yield
 
 
@@ -44,6 +46,9 @@ def create_app(init_db: bool = True) -> FastAPI:
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+            if request.method not in ("GET", "HEAD", "OPTIONS") and response.status_code < 400 \
+                    and request.url.path not in ("/api/login", "/api/logout", "/api/password"):
+                calculado.programar()      # un cambio: caso_calculado se actualiza en unos segundos
         return response
 
     @app.exception_handler(ErrorNegocio)

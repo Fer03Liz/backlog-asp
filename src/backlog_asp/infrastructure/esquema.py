@@ -5,7 +5,7 @@ para que las comparaciones y el JSON de la API no cambien. La bitácora y los co
 borrar (triggers INSTEAD OF).
 """
 from .. import config
-from ..domain.catalogos import DEFAULT_SETTINGS
+from ..domain.catalogos import DEFAULT_SETTINGS, ESTADOS_RENOMBRADOS, ROLES, ROLES_DESACTIVADOS, ROLES_RENOMBRADOS
 
 K = "NVARCHAR(100)"      # llaves y columnas con índice
 T = "NVARCHAR(400)"      # texto corto
@@ -16,7 +16,7 @@ N = "FLOAT"
 TABLAS = {
     "users": f"""id INT IDENTITY(1,1) PRIMARY KEY, username NVARCHAR(64) NOT NULL UNIQUE, full_name {T},
         pw_hash NVARCHAR(200) NOT NULL,
-        role NVARCHAR(10) NOT NULL CHECK(role IN ('admin','editor','lector','acm','tienda')),
+        role NVARCHAR(10) NOT NULL CONSTRAINT ck_users_role CHECK(role IN ('admin','supervisor','comprador','atencion')),
         active INT NOT NULL DEFAULT 1, failed_attempts INT NOT NULL DEFAULT 0, locked_until {D},
         must_change_pw INT NOT NULL DEFAULT 0, created_at {D} NOT NULL""",
     "sessions": f"""token_hash NVARCHAR(64) PRIMARY KEY, user_id INT NOT NULL REFERENCES [{{s}}].[users](id),
@@ -33,7 +33,7 @@ TABLAS = {
         first_seen {D}, last_seen {D}, source_status NVARCHAR(20) NOT NULL DEFAULT 'abierto',
         closed_on {D}, close_reason {T}, reopened INT NOT NULL DEFAULT 0, oh_since {D},
         estado NVARCHAR(60) NOT NULL DEFAULT 'Nuevo', responsable {T},
-        fecha_recepcion {D}, fecha_despacho {D}, fecha_objetivo {D}, fecha_comunicada {D},
+        fecha_recepcion {D}, fecha_despacho {D}, fecha_objetivo {D}, fecha_comunicada {D}, novedad_despacho {TX},
         propuesta {T}, aprobacion_kam NVARCHAR(30) NOT NULL DEFAULT 'No requiere',
         kam_solicitado {D}, kam_respuesta {D}, updated_at {D}""",
     "case_history": f"""id INT IDENTITY(1,1) PRIMARY KEY, key_notif {K} NOT NULL, load_id INT, file_date {D},
@@ -81,6 +81,13 @@ TABLAS = {
         estado NVARCHAR(20) NOT NULL DEFAULT 'Pendiente' CHECK(estado IN ('Pendiente','Aprobada','Rechazada')),
         solicitado_por NVARCHAR(64), solicitado_at {D} NOT NULL, resuelto_por NVARCHAR(64), resuelto_at {D}, respuesta {TX}""",
     "notas_leidas": f"comment_id INT PRIMARY KEY, username NVARCHAR(64), at {D} NOT NULL",
+    # Una fila por caso con lo que calcula la app (fechas, alertas, estado de la tienda). La lee Power BI.
+    "caso_calculado": f"""key_notif {K} PRIMARY KEY, notificacion {T}, ship_to {K}, tienda {T}, parte {T}, descripcion {T},
+        equipo {T}, creado {D}, source_status NVARCHAR(20), pendiente INT, estado {T}, estado_tienda {T},
+        fecha_tienda {D}, fecha_tienda_tipo {T}, opcion {T}, eta_apple {D}, llegada_estimada {D}, llegada_fuente {T},
+        despacho_posible {D}, fecha_recepcion {D}, fecha_despacho {D}, novedad_despacho {TX}, limite_fr {D},
+        dias_limite INT, edad INT, nivel NVARCHAR(10), alertas INT, alertas_texto {TX}, prioridad INT, super_asp INT,
+        propuesta {T}, aprobacion_kam {T}, tienda_email {T}, cerrado_el {D}, calculado_at {D} NOT NULL""",
     "lotes": f"""id INT IDENTITY(1,1) PRIMARY KEY, at {D} NOT NULL, user_id INT, username NVARCHAR(64),
         cambios {TX} NOT NULL, casos {TX} NOT NULL, comentarios {TX}, deshecho_at {D}, deshecho_por NVARCHAR(64)""",
 }
@@ -100,7 +107,8 @@ INDICES = [
 ]
 
 # Columnas agregadas después de crear la base: (tabla, columna, tipo). Se agregan solas al arrancar.
-MIGRACIONES: list = []
+MIGRACIONES: list = [("cases", "novedad_despacho", TX)]
+# fecha_objetivo ("Fecha a comunicar") ya no se usa; la columna queda para no perder datos.
 
 SOLO_LECTURA = [
     ("audit_log", "La bitácora es de solo lectura"),
@@ -127,11 +135,36 @@ def _triggers(s: str) -> list:
             f"BEGIN SET NOCOUNT ON; THROW 50001, N'{msg}', 1; END" for table, msg in SOLO_LECTURA]
 
 
+def _migrar_roles(conn, s: str) -> None:
+    """Roles nuevos (admin, supervisor, comprador, atención). Idempotente: no hace nada si ya está migrado."""
+    hay = conn.execute(
+        "SELECT 1 x FROM sys.check_constraints WHERE name = N'ck_users_role' AND parent_object_id = OBJECT_ID(?) "
+        "AND definition LIKE N'%supervisor%'", (f"[{s}].[users]",)).fetchone()
+    if hay:
+        return
+    viejas = conn.execute(
+        "SELECT name FROM sys.check_constraints WHERE parent_object_id = OBJECT_ID(?) AND definition LIKE N'%role%'",
+        (f"[{s}].[users]",))
+    for r in viejas:
+        conn.execute(f"ALTER TABLE [{s}].[users] DROP CONSTRAINT [{r['name']}]")
+    for antes in ROLES_DESACTIVADOS:                       # ACM y tiendas salen de la app: quedan inactivos
+        conn.execute("UPDATE users SET active=0 WHERE role=?", (antes,))
+    for antes, ahora in ROLES_RENOMBRADOS.items():
+        conn.execute("UPDATE users SET role=? WHERE role=?", (ahora, antes))
+    en = ", ".join(f"'{r}'" for r in ROLES)
+    conn.execute(f"ALTER TABLE [{s}].[users] ADD CONSTRAINT ck_users_role CHECK(role IN ({en}))")
+    conn.commit()
+
+
 def init_db(conn) -> None:
     """Crea el esquema, las tablas, índices y triggers que falten, y los parámetros por defecto."""
     s = config.DB_SCHEMA
     for sql in _ddl(s):
         conn.execute(sql)
+    conn.commit()
+    _migrar_roles(conn, s)
+    for antes, ahora in ESTADOS_RENOMBRADOS.items():      # estados con nombre nuevo: idempotente
+        conn.execute("UPDATE cases SET estado=? WHERE estado=?", (ahora, antes))
     conn.commit()
     for sql in _triggers(s):
         conn.execute(sql)

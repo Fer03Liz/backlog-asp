@@ -19,7 +19,7 @@ from .. import config
 TABLAS = ("users", "sessions", "settings", "loads", "cases", "case_history", "snapshots", "comments", "audit_log",
           "kgb", "prices", "parts", "shipto", "guide_arrivals", "holidays_extra", "emails_log", "open_orders",
           "open_order_history", "inventario", "inventario_history", "miami_purchases", "shipto_alias",
-          "user_shipto", "solicitudes_fecha", "notas_leidas", "lotes")
+          "user_shipto", "solicitudes_fecha", "notas_leidas", "lotes", "caso_calculado")
 _RX_TABLA = re.compile(r"\b(FROM|JOIN|INTO|UPDATE)\s+(" + "|".join(TABLAS) + r")\b", re.I)
 LOTE_MAX = 400                     # sentencias por viaje en las escrituras acumuladas
 

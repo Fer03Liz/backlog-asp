@@ -34,15 +34,22 @@ nube ni se conecta a SAP ni a Apple: los archivos se cargan a mano.
 | **Casos** | Todas las líneas del backlog con filtros (solución, tienda, estado, alertas, Super ASP), agrupación y orden. El detalle de cada caso muestra alertas, fechas calculadas, gestión, tránsito (KGB), pedido en Apple (Open Orders), datos de Apple, comentarios o notas, e historial. Permite selección múltiple para aplicar cambios a varios casos. |
 | **Guías** | Casos agrupados por número de guía, con su estado en el KGB. Al registrar la llegada de una guía, todos sus casos quedan recibidos. |
 | **Abastecimiento** | Por parte: demanda del backlog frente a lo que viene en el KGB, lo pedido en Open Orders, el inventario propio y las compras en Miami. Señala las partes que nadie está trayendo. |
-| **Correos** | Correo diario por tienda (texto para copiar o borrador `.eml` para Outlook). Identifica cada línea por notificación y número de parte; nunca incluye precios, PO ni datos de otras tiendas. |
+| **Correos** | Correo diario por tienda (texto para copiar o borrador `.eml` para Outlook). Identifica cada línea por notificación y número de parte; nunca incluye precios, PO ni datos de otras tiendas. Tiene buscador por tienda, ship-to o correo, y el panel para asociar tiendas con el archivo de tiendas. |
 | **Indicadores** | Aging promedio del backlog y de despacho, fill rate, líneas en riesgo, OH por despachar, espera de la ACM, flujo diario, tiendas y porcentaje del KGB que va a Colombia. |
 | **Cargas** | Subir los archivos y ver el historial de cargas. Hay plantillas para inventario, precios y tiendas. |
-| **Administración** | Usuarios y roles, tiendas de cada usuario tienda, correos de las tiendas, solicitudes de cambio de fecha, parámetros, días no hábiles y bitácora. |
-| **Mis casos** | Única pantalla del rol tienda: el estado y la fecha de sus propios casos. |
+| **Solicitudes** | Solo supervisor y administrador: aprobar o rechazar los cambios de fechas de recepción y despacho. |
+| **Administración** | Solo administrador: usuarios y roles, parámetros, días no hábiles y bitácora. |
+
+### Estados del caso
+
+`Nuevo` → `En gestión` → `En cotización` → `En autorización` → `En tránsito por Miami` → `Recibido` → `Despachado` → `Entregado` (más `Sin solución`).
+Registrar la recepción lleva a `Recibido` los casos en `Nuevo`, `En gestión` o `En tránsito por Miami`. Marcar `Despachado` o `Entregado`
+sin fecha de despacho registra la de hoy. El campo **Novedad en despacho** (texto libre, 500 caracteres) guarda los inconvenientes del despacho;
+el caso muestra la etiqueta «Novedad» en la lista. La «Fecha a comunicar» se eliminó: el estado de cada caso se comunica a diario por correo.
 
 ### Avisos
 
-- **Campana "Avisos"** (equipo interno). Cuenta las notas nuevas de la ACM. Cada nota queda sin leer, y con una alerta en el caso, hasta que alguien la marca leída.
+- **Campana "Avisos"** (equipo interno). Muestra las solicitudes de cambio de fecha pendientes (para supervisor y administrador) y las respuestas recientes a las propias.
 - **Solicitudes pendientes.** El administrador ve en la misma campana las solicitudes de cambio de fecha que esperan su respuesta.
 
 ---
@@ -52,38 +59,44 @@ nube ni se conecta a SAP ni a Apple: los archivos se cargan a mano.
 El control está en el servidor. Cada petición se valida contra lo que su rol puede hacer, y la pantalla solo
 muestra lo permitido.
 
-| Acción | Administrador | Editor (torre de control) | Lector (jefatura) | Apple Care Manager | Tienda |
-|---|:-:|:-:|:-:|:-:|:-:|
-| Ver casos, guías, indicadores | Sí | Sí | Sí | Casos, Abastecimiento e Indicadores | Solo sus casos |
-| Ver precios y valor del backlog | Sí | Sí | Sí | No | No |
-| Ver compras en Miami e inventario propio | Sí | Sí | Sí | No (ve "Estimada por Ingram") | No |
-| Cambiar gestión del caso (estado, responsable, propuesta, aprobación) | Sí | Sí | No | No | No |
-| Registrar recepción y despacho | Sí, y puede corregirlas | Una sola vez; para cambiar, solicitud | No | No | No |
-| Aprobar o rechazar solicitudes de cambio de fecha | Sí | No | No | No | No |
-| Selección múltiple (cambios en bloque) | Sí | Sí | No | No | No |
-| Comentarios del equipo | Escribe y lee todos | Escribe y lee todos | Lee todos | Lee solo los "Compartido con Apple" | No |
-| Notas para el equipo | — | — | — | Escribe (generan aviso) | No |
-| Marcar notas de la ACM como leídas | Sí | Sí | Sí | No | No |
-| Correos a tiendas | Sí | Sí | Solo ver | No | No |
-| Cargar archivos | Sí | Sí | Solo ver el historial | No | No |
-| Exportar CSV | Sí | Sí | Sí | No | No |
-| Usuarios, parámetros, festivos, bitácora, correos de tiendas | Sí | No | No | No | No |
+| Acción | Administrador | Supervisor | Comprador | Atención al cliente |
+|---|:-:|:-:|:-:|:-:|
+| Ver casos, guías, abastecimiento, indicadores, precios, Miami e inventario | Sí | Sí | Sí | Sí |
+| Cambiar gestión del caso (estado, responsable, novedad, propuesta, aprobación) | Sí | Sí | Sí | No |
+| Registrar recepción y despacho | Sí, y puede corregirlas | Sí, y puede corregirlas | Una sola vez; para cambiar, solicitud | No |
+| Aprobar o rechazar solicitudes de cambio de fecha (pestaña Solicitudes) | Sí | Sí | No | No |
+| Selección múltiple (cambios en bloque) y deshacer la tanda | Sí | Sí (también las ajenas) | Sí (solo las propias) | No |
+| Registrar llegada de guías | Sí | Sí | Sí | No |
+| Compras en Miami | Sí | Sí | Sí | No |
+| Comentar casos | Sí | Sí | Sí | Sí |
+| Correos a tiendas, correo de cada tienda y asociación de tiendas | Sí | Sí | No | Sí |
+| Cargar backlog e inventario | Sí | Sí | No | No |
+| Cargar KGB y Open Orders | Sí | Sí | Sí | No |
+| Cargar precios y Parts Data | Sí | No | Sí | No |
+| Cargar archivo de tiendas | Sí | Sí | No | Sí |
+| Exportar CSV | Sí | Sí | Sí | Sí |
+| Usuarios, parámetros, festivos, bitácora | Sí | No | No | No |
 
-Los usuarios internos son el administrador (Planeación), los editores (torre de control) y los lectores
-(jefatura, solo consulta). Detalle de los roles externos:
+La matriz vive en `application/acceso.py` (constantes `EDITORES`, `APROBADORES`, `CORREOS` y `CARGAS`): para cambiar
+un permiso se edita ahí y se actualiza esta tabla. El servidor valida el rol en cada petición; la interfaz solo oculta
+lo que el rol no puede usar.
 
-- **Apple Care Manager (ACM)**
-  - **Qué ve:** todos los casos y sus fechas y alertas operativas.
-  - **Qué no ve:** precios, compras en Miami, inventario propio, guías, correos, cargas, administración ni comentarios internos.
-  - **Gestión:** en el historial solo ve estado, propuesta, aprobación y fechas.
-  - **Qué hace:** deja notas en los casos; no edita nada más.
-- **Tienda**
-  - **Qué ve:** solo los casos de los ship-to que el administrador le asigna, con cuatro estados:
-    - en bodega por despachar, con despacho estimado;
-    - en proceso, con fecha tentativa igual a la ETA de Apple;
-    - en gestión, sin fecha;
-    - despachado, durante los últimos 15 días.
-  - **Qué no ve:** PO, precios, comentarios ni datos de otras tiendas. No escribe nada.
+**Roles que ya no existen.** La ACM y las tiendas dejaron de entrar a la app: ven sus casos en Power BI. Al arrancar,
+la migración pasa los usuarios `editor` y `lector` al rol `atencion` (el de menor alcance: el administrador los
+reasigna en Administración → Usuarios) y desactiva los usuarios `acm` y `tienda`. Sus comentarios y la bitácora se conservan.
+
+### Power BI: tabla `caso_calculado`
+
+Power BI lee SQL Server directamente y no puede repetir las reglas de la app (días hábiles, cruce con KGB, inventario,
+alertas). Por eso la app deja una fila por caso en `caso_calculado` (casos abiertos y cerrados en los últimos 45 días)
+con el estado y la fecha que ve la tienda, la solución, las fechas calculadas, el nivel y el texto de las alertas.
+
+- Se reconstruye sola unos 15 segundos después de cada carga o cambio, y al arrancar la app.
+- Para dejarla al día justo antes de la actualización de Power BI: `poetry run backlog-refrescar` (tarea programada).
+- Las vistas de la ACM y de las tiendas se filtran **en Power BI**. Como Power BI se conecta a la base y no pasa por los
+  permisos de la app, conviene darle una cuenta de SQL Server de solo lectura sobre `caso_calculado` (y no sobre las demás
+  tablas), y filtrar por tienda con seguridad a nivel de fila (RLS) en el modelo.
+- La tabla no lleva precios, PO ni comentarios.
 
 ---
 
@@ -99,7 +112,7 @@ Los usuarios internos son el administrador (Planeación), los editores (torre de
 - **Latencia:** el servidor está a unos 120 ms por viaje. Las escrituras masivas viajan en lotes y las lecturas de cada pantalla en un solo viaje; una carga de backlog de 3.000 líneas toma unos 20 s. Conviene instalar la app en un servidor cercano a la base.
 - **Confidencialidad:** los archivos de datos (`.xlsx`, `.csv`, `.eml`, `.db`) y el `.env` están excluidos del repositorio (`.gitignore`).
 
-### Tablas (26)
+### Tablas (27)
 
 | Grupo | Tablas | Cómo se escriben |
 |---|---|---|
@@ -108,7 +121,8 @@ Los usuarios internos son el administrador (Planeación), los editores (torre de
 | Datos de Apple | `kgb`, `open_orders`, `open_order_history` | Cada carga reemplaza el KGB y el Open Orders vigentes; el historial de Open Orders acumula una foto por día. |
 | Abastecimiento propio | `inventario`, `inventario_history`, `miami_purchases` | El inventario se reemplaza en cada carga y guarda su foto diaria. Las compras en Miami se registran a mano. |
 | Maestros | `prices`, `parts`, `shipto`, `shipto_alias`, `holidays_extra`, `settings` | Precios y Parts Data se reemplazan completos en cada carga. Las tiendas se actualizan una por una. Lo demás se edita en Administración. |
-| Acceso y control | `users`, `sessions`, `user_shipto`, `loads`, `audit_log` | `audit_log` es la bitácora: no se puede editar ni borrar (triggers). `loads` registra cada archivo cargado. |
+| Publicación | `caso_calculado` | La reconstruye la app (no se edita a mano): una fila por caso para Power BI. |
+| Acceso y control | `users`, `sessions`, `user_shipto` (sin uso desde que las tiendas salieron de la app), `loads`, `audit_log` | `audit_log` es la bitácora: no se puede editar ni borrar (triggers). `loads` registra cada archivo cargado. |
 
 ### Reglas de escritura
 
@@ -163,7 +177,6 @@ Super ASP (estrategia Z8.2) desempata.
 | Guía retrasada | Ámbar | La EDD pasa la ETA o Apple reporta demora (Shipment Delay) |
 | Llegada sin recepción | Ámbar | Ya debió llegar y nadie registró la recepción |
 | Esperando a la ACM | Ámbar | Aprobación de la ACM pendiente por más de 2 días |
-| Nota nueva de la ACM | Ámbar | La ACM dejó una nota que nadie ha marcado leída |
 | Se puede despachar con inventario propio | Ámbar | El inventario cargado tiene unidad libre para el caso |
 | Fuera de SLA Apple | Info | Apple marca la guía fuera de su SLA, pero llega antes de la ETA |
 | ETA en día no hábil | Info | La ETA cae en fin de semana o festivo |
@@ -295,8 +308,7 @@ defusedxml, python-multipart, SQLAlchemy, pymssql y python-dotenv.
 `tests/test_flujo.py` recorre el flujo completo contra SQL Server en un esquema temporal (`backlog_test_…`)
 que se borra al terminar: nunca toca el esquema `backlog`. Genera un backlog, KGB, Open Orders, precios,
 tiendas e inventario de prueba. Valida login y CSRF, cargas y rechazo de archivos repetidos o viejos,
-cruce con el KGB, gestión, guías, correos, compras en Miami, selección múltiple, roles (lector, editor, ACM y
-tienda), fechas protegidas con solicitud al administrador, bloqueo por intentos fallidos y que la bitácora y los
+cruce con el KGB, gestión, guías, correos, compras en Miami, selección múltiple, roles (administrador, supervisor, comprador y atención al cliente), fechas protegidas con solicitud a supervisor o administrador, la tabla `caso_calculado`, bloqueo por intentos fallidos y que la bitácora y los
 comentarios no se pueden borrar:
 
 ```

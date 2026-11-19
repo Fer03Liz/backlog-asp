@@ -2,7 +2,7 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
-from ....application import abastecimiento, acceso, auditoria, contexto, indicadores, inventario, miami
+from ....application import abastecimiento, auditoria, contexto, indicadores, inventario, miami
 from ..dependencias import EDITORS, current_user, get_db
 
 router = APIRouter()
@@ -10,12 +10,12 @@ router = APIRouter()
 
 @router.get("/api/kpis")
 def get_kpis(user=Depends(current_user), conn=Depends(get_db)):
-    return acceso.kpis(user, indicadores.kpis(conn, contexto.Context(conn)))
+    return indicadores.kpis(conn, contexto.Context(conn))
 
 
 @router.get("/api/supply")
 def supply(todas: int = 0, user=Depends(current_user), conn=Depends(get_db)):
-    return acceso.abastecimiento(user, abastecimiento.por_parte(conn, contexto.Context(conn), incluir_sin_casos=bool(todas)))
+    return abastecimiento.por_parte(conn, contexto.Context(conn), incluir_sin_casos=bool(todas))
 
 
 @router.get("/api/supply/{part}")

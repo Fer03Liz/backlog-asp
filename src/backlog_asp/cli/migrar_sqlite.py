@@ -10,6 +10,7 @@ import sqlite3
 import sys
 
 from .. import config
+from ..domain.catalogos import ROLES_DESACTIVADOS, ROLES_RENOMBRADOS
 from ..infrastructure import database, esquema
 
 IDENTIDAD = {"users", "loads", "case_history", "comments", "audit_log", "emails_log", "miami_purchases",
@@ -42,6 +43,16 @@ def main():
             destino = _columnas_destino(conn, table)
             cols = [c for c in (r[1] for r in src.execute(f"PRAGMA table_info({table})")) if c in destino]
             filas = [tuple(r[c] for c in cols) for r in src.execute(f"SELECT {', '.join(cols)} FROM {table}")]
+            if table == "users":                    # roles de la versión anterior -> roles actuales
+                i, a = cols.index("role"), cols.index("active") if "active" in cols else None
+                nuevas = []
+                for f in filas:
+                    f = list(f)
+                    if a is not None and f[i] in ROLES_DESACTIVADOS:
+                        f[a] = 0
+                    f[i] = ROLES_RENOMBRADOS.get(f[i], f[i])
+                    nuevas.append(tuple(f))
+                filas = nuevas
             if table == "settings":
                 conn.execute("DELETE FROM settings")
             identidad = table in IDENTIDAD and "id" in cols
