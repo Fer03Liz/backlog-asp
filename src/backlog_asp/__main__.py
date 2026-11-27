@@ -13,6 +13,9 @@ from . import config
 
 def main() -> None:
     url = f"http://{config.HOST}:{config.PORT}"
+    if config.DB_ENGINE == "sqlite":
+        from .infrastructure import sqlite_pruebas
+        print(f"MODO PRUEBAS: base SQLite {sqlite_pruebas.ruta_base()}  (no se conecta a SQL Server)")
     print(f"Backlog ASP en {url}  (cierre esta ventana o use Ctrl+C para detenerlo)")
     if not os.environ.get("BACKLOG_NO_BROWSER"):
         threading.Timer(2.0, lambda: webbrowser.open(url)).start()

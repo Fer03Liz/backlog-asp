@@ -1,4 +1,5 @@
 """Prueba de punta a punta contra SQL Server, en un esquema temporal que se borra al final (no toca `backlog`).
+Con BACKLOG_DB_ENGINE=sqlite corre igual contra una base SQLite temporal (ver PRUEBAS.md).
 
 Uso: poetry run pytest
 - Por defecto genera un backlog, un KGB, Open Orders, precios, tiendas e inventario de prueba.
@@ -24,7 +25,8 @@ from backlog_asp.application import sesiones  # noqa: E402
 from backlog_asp.infrastructure import database, esquema  # noqa: E402
 from backlog_asp.presentation.api.app import create_app  # noqa: E402
 
-pytestmark = pytest.mark.skipif(not config.DATABASE_URL, reason="Sin SQL_SERVER_STRING_CONNECTION")
+pytestmark = pytest.mark.skipif(not config.DATABASE_URL and config.DB_ENGINE != "sqlite",
+                                reason="Sin SQL_SERVER_STRING_CONNECTION ni BACKLOG_DB_ENGINE=sqlite")
 HOY = date.fromisoformat(os.environ["BACKLOG_HOY"])
 F0 = HOY - timedelta(days=1)
 

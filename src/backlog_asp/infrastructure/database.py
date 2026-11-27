@@ -31,6 +31,8 @@ _lock = threading.Lock()
 
 def engine():
     global _engine
+    if config.DB_ENGINE == "sqlite":
+        raise RuntimeError("Modo pruebas (BACKLOG_DB_ENGINE=sqlite): esta ejecución no se conecta a SQL Server.")
     with _lock:
         if _engine is None:
             if not config.DATABASE_URL:
@@ -174,4 +176,7 @@ class Conexion:
 
 
 def connect() -> Conexion:
+    if config.DB_ENGINE == "sqlite":                 # solo pruebas en este equipo (ver PRUEBAS.md)
+        from . import sqlite_pruebas
+        return sqlite_pruebas.connect()
     return Conexion(engine().raw_connection())

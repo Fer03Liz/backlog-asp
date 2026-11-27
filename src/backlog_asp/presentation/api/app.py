@@ -56,13 +56,21 @@ def create_app(init_db: bool = True) -> FastAPI:
             return JSONResponse({"detail": getattr(exc, "detail", "No encontrado.")}, status_code=404)
         return RedirectResponse("/")
 
+    def pagina(nombre: str):
+        if config.DB_ENGINE != "sqlite":
+            return FileResponse(config.STATIC_DIR / nombre)
+        # Modo pruebas: aviso fijo en pantalla para no confundirlo con el tablero real (solo CSS, cumple la CSP)
+        from fastapi.responses import HTMLResponse
+        html = (config.STATIC_DIR / nombre).read_text(encoding="utf-8")
+        return HTMLResponse(html.replace("</head>", '  <link rel="stylesheet" href="/static/modo-pruebas.css">\n</head>', 1))
+
     @app.get("/", include_in_schema=False)
     def index():
-        return FileResponse(config.STATIC_DIR / "index.html")
+        return pagina("index.html")
 
     @app.get("/login", include_in_schema=False)
     def login_page():
-        return FileResponse(config.STATIC_DIR / "login.html")
+        return pagina("login.html")
 
     app.mount("/static", StaticFiles(directory=config.STATIC_DIR), name="static")
     for r in (auth, casos, gestion, correos, abastecimiento, tiendas, cargas, admin):

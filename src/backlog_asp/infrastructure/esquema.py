@@ -129,6 +129,9 @@ def _triggers(s: str) -> list:
 
 def init_db(conn) -> None:
     """Crea el esquema, las tablas, índices y triggers que falten, y los parámetros por defecto."""
+    if config.DB_ENGINE == "sqlite":                 # modo pruebas: las mismas tablas, escritas para SQLite
+        from . import sqlite_pruebas
+        return sqlite_pruebas.init_db(conn)
     s = config.DB_SCHEMA
     for sql in _ddl(s):
         conn.execute(sql)
@@ -143,6 +146,9 @@ def init_db(conn) -> None:
 
 def drop_all(conn) -> None:
     """Borra el esquema completo. Solo para pruebas: se niega con cualquier esquema que no sea de pruebas."""
+    if config.DB_ENGINE == "sqlite":
+        from . import sqlite_pruebas
+        return sqlite_pruebas.drop_all(conn)
     s = config.DB_SCHEMA
     if not s.startswith("backlog_test"):
         raise RuntimeError(f"drop_all solo se permite en esquemas de prueba (backlog_test*), no en '{s}'.")
