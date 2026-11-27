@@ -521,7 +521,7 @@ def _rehacer(raw, tablas: list, cuerpos: dict) -> None:
             raw.execute("ROLLBACK")
         raise RuntimeError(
             f"La base de pruebas no se pudo ajustar al esquema de esta rama (tablas: {', '.join(tablas)}): {exc}. "
-            "Guárdela aparte y empiece una nueva con: poetry run python -m backlog_asp.cli.pruebas reiniciar") from exc
+            "Guárdela aparte y empiece una nueva con: .\\.venv\\Scripts\\python -m backlog_asp.cli.pruebas reiniciar") from exc
     finally:
         raw.execute("PRAGMA foreign_keys = ON")
 

@@ -1,11 +1,11 @@
 """Base SQLite de pruebas (ver PRUEBAS.md). Este comando siempre trabaja en modo pruebas: nunca toca SQL Server.
 
 Uso:
-  poetry run python -m backlog_asp.cli.pruebas                  estado de la base de pruebas
-  poetry run python -m backlog_asp.cli.pruebas copiar RUTA.db   copia los datos de una base SQLite anterior
-                                                                (la abre en solo lectura: no la modifica)
-  poetry run python -m backlog_asp.cli.pruebas reiniciar        guarda la base actual como respaldo; la próxima
-                                                                vez el tablero empieza con una base vacía
+  .\\.venv\\Scripts\\python -m backlog_asp.cli.pruebas                  estado de la base de pruebas
+  .\\.venv\\Scripts\\python -m backlog_asp.cli.pruebas copiar RUTA.db   copia los datos de una base SQLite
+                                                                      anterior (la abre en solo lectura)
+  .\\.venv\\Scripts\\python -m backlog_asp.cli.pruebas reiniciar        guarda la base actual como respaldo;
+                                                                      la próxima vez el tablero empieza vacío
 """
 import os
 
@@ -85,7 +85,7 @@ def copiar(origen: str) -> None:
         ocupadas = [t for t in esquema.ORDEN if t != "settings" and conn.execute(f"SELECT TOP 1 1 x FROM {t}").fetchone()]
         if ocupadas:
             sys.exit(f"La base de pruebas ya tiene datos ({', '.join(ocupadas)}). No se copia nada.\n"
-                     "Para empezar de cero: poetry run python -m backlog_asp.cli.pruebas reiniciar")
+                     "Para empezar de cero: .\\.venv\\Scripts\\python -m backlog_asp.cli.pruebas reiniciar")
         print(f"Copiando {fuente} (solo lectura) a {destino}")
         for t in esquema.ORDEN:
             if t not in origen_tablas or t == "sessions":          # las sesiones viejas no sirven

@@ -15,6 +15,8 @@ La carpeta `data/` y los archivos `*.db` están en `.gitignore`: la base de prue
 ## Uso diario
 
 1. Doble clic en **`iniciar_pruebas.bat`**.
+   - No necesita Poetry. Usa el Python de `.venv` (lo crea si no existe) e instala las versiones exactas de
+     `poetry.lock`, las mismas del servidor. Solo instala la primera vez o cuando cambia el lock (`cli/entorno.py`).
    - La primera vez pide crear el usuario administrador.
    - Abre `http://127.0.0.1:8766`, con una franja roja arriba y el aviso "MODO PRUEBAS" abajo a la izquierda.
 2. Cargue los archivos del día (backlog, KGB, Open Orders…) desde **Cargas**, como en el tablero real.
@@ -22,12 +24,16 @@ La carpeta `data/` y los archivos `*.db` están en `.gitignore`: la base de prue
 
 ## Comandos
 
+Se escriben en una terminal abierta en la carpeta del proyecto (sirven en CMD y en PowerShell). Ejecute antes
+`iniciar_pruebas.bat` al menos una vez, para que `.venv` tenga las dependencias.
+
 | Comando | Qué hace |
 |---|---|
-| `poetry run python -m backlog_asp.cli.pruebas` | Muestra la ruta, el tamaño, las filas por tabla y los usuarios de la base de pruebas. |
-| `poetry run python -m backlog_asp.cli.pruebas copiar data\backlog.db` | Copia a la base de pruebas los datos de una base SQLite anterior. Abre el origen en solo lectura y no lo modifica. Se niega si la base de pruebas ya tiene datos. |
-| `poetry run python -m backlog_asp.cli.pruebas reiniciar` | Guarda la base actual en `data/pruebas/respaldos/` y deja el tablero listo para empezar vacío. Cierre antes el tablero de pruebas. |
-| `set BACKLOG_DB_ENGINE=sqlite` y luego `poetry run pytest` | Corre todas las pruebas contra bases SQLite temporales. |
+| `.\.venv\Scripts\python -m backlog_asp.cli.pruebas` | Muestra la ruta, el tamaño, las filas por tabla y los usuarios de la base de pruebas. |
+| `.\.venv\Scripts\python -m backlog_asp.cli.pruebas copiar data\backlog.db` | Copia a la base de pruebas los datos de una base SQLite anterior. Abre el origen en solo lectura y no lo modifica. Se niega si la base de pruebas ya tiene datos. |
+| `.\.venv\Scripts\python -m backlog_asp.cli.pruebas reiniciar` | Guarda la base actual en `data/pruebas/respaldos/` y deja el tablero listo para empezar vacío. Cierre antes el tablero de pruebas. |
+| `.\.venv\Scripts\python src\backlog_asp\cli\entorno.py --dev` | Agrega pytest y httpx al entorno (una vez). |
+| CMD: `set BACKLOG_DB_ENGINE=sqlite` · PowerShell: `$env:BACKLOG_DB_ENGINE="sqlite"`; luego `.\.venv\Scripts\python -m pytest` | Corre todas las pruebas contra bases SQLite temporales. |
 
 Para trabajar con los datos reales de octubre, ejecute `copiar` **antes** de abrir el tablero de pruebas por primera vez
 (o después de `reiniciar`). Los usuarios y las claves serán los de esa base.

@@ -1,6 +1,6 @@
 """Modo pruebas (SQLite): traducción de T-SQL, rechazo de SQL que fallaría en SQL Server y protecciones.
 
-No necesita SQL Server: usa bases SQLite temporales. Corre siempre con `poetry run pytest`.
+No necesita SQL Server: usa bases SQLite temporales. Corre con pytest en cualquier modo (ver PRUEBAS.md).
 """
 import pytest
 import pymssql
