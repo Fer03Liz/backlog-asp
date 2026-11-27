@@ -1,7 +1,7 @@
 """Reglas de un caso del backlog: cruce con el KGB, fechas, alertas, precio y prioridad.
 
 `ctx` es la foto de datos que arma la capa de aplicación (application/contexto.py): KGB, precios, partes,
-llegadas de guías, compras en Miami, inventario asignado, notas sin leer y parámetros.
+llegadas de guías, compras en Miami, inventario asignado y parámetros.
 """
 import json
 from datetime import timedelta
@@ -19,7 +19,7 @@ def nivel_de(alerts) -> str:
     return "rojo" if "rojo" in levels else "ambar" if "ambar" in levels else "info" if "info" in levels else "ok"
 
 
-# ---------------------------------------------------------------- alertas de Miami, inventario y notas de la ACM
+# ---------------------------------------------------------------- alertas de Miami e inventario
 def alertas_miami(c, ctx, compra, limite, pnorm, sustituto) -> list:
     """Alertas de Miami para un caso pendiente."""
     t, cal, out = ctx.today, ctx.cal, []
@@ -65,16 +65,6 @@ def alertas_inventario(c, ctx, inv) -> list:
         return [_alert("INV_OH_SIN_STOCK", "ambar",
                        f"La ACM lo marca OH, pero el inventario del {fecha} no tiene unidades libres de esta parte.")]
     return []
-
-
-def alertas_notas(c, ctx) -> list:
-    """Notas de la ACM que nadie del equipo ha marcado leídas."""
-    n = ctx.notas_acm.get(c["key_notif"])
-    if not n:
-        return []
-    extra = f" (y {n['n'] - 1} más)" if n["n"] > 1 else ""
-    texto = n["text"] if len(n["text"]) <= 120 else n["text"][:117] + "…"
-    return [_alert("NOTA_ACM", "ambar", f"Nota nueva de la ACM ({n['username']}, {n['at'][:10]}){extra}: «{texto}»")]
 
 
 # ---------------------------------------------------------------- enriquecimiento
@@ -151,7 +141,7 @@ def enrich(c: dict, ctx) -> dict:
         limite = cal.add_business_days(eta, ctx.tol)
     else:
         limite = eta + timedelta(days=ctx.tol)
-    fecha_cliente = d(c.get("fecha_objetivo")) or despacho
+    fecha_cliente = despacho
 
     # --- Alertas
     alerts = []
@@ -201,7 +191,6 @@ def enrich(c: dict, ctx) -> dict:
         alerts.append(_alert("DESPACHADO_SIGUE", "info", "Despachado y sigue en el reporte; confirmar cierre con la tienda."))
     if c.get("reopened") and not closed:
         alerts.append(_alert("REABIERTO", "ambar", "El caso había salido del reporte y volvió a aparecer."))
-    alerts.extend(alertas_notas(c, ctx))
     nivel = nivel_de(alerts)
 
     # --- Precio: el caso siempre vale stocking. Fuera de garantía la tienda paga exchange y Apple la diferencia.
@@ -270,11 +259,13 @@ def enrich(c: dict, ctx) -> dict:
 
 
 # ---------------------------------------------------------------- vista de la tienda
-EN_GESTION = {"En gestión", "Cotización enviada", "Pendiente aprobación ACM", "Sin solución"}
+EN_GESTION = {"En gestión", "En cotización", "En autorización", "En tránsito por Miami", "Sin solución"}
 
 
 def estado_tienda(c: dict, hoy: str):
     """(estado, fecha, qué es la fecha). Fecha tentativa = ETA de Apple, salvo lo que está en gestión."""
+    if c.get("estado") == "Entregado":
+        return "Entregado", c.get("fecha_despacho"), "Despachado el"
     if c.get("fecha_despacho"):
         return "Despachado", c["fecha_despacho"], "Despachado el"
     if c.get("llegada_fuente") in ("Recibido", "En inventario", "Inventario propio"):

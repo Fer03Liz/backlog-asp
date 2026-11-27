@@ -17,8 +17,13 @@ DEFAULT_SETTINGS = {
 SETTINGS_ENTEROS = {"fr_tolerance_days", "despachado_grace_days", "kam_alert_days", "oh_max_days",
                     "email_transit_days", "oo_transit_days", "miami_lead_days"}
 
-ESTADOS = ["Nuevo", "En gestión", "Cotización enviada", "Pendiente aprobación ACM",
-           "Recibido", "Despachado", "Sin solución"]
+ESTADOS = ["Nuevo", "En gestión", "En cotización", "En autorización", "En tránsito por Miami",
+           "Recibido", "Despachado", "Entregado", "Sin solución"]
+# Nombres anteriores de los estados: la base los actualiza sola al arrancar (infrastructure/esquema.py).
+ESTADOS_RENOMBRADOS = {"Cotización enviada": "En cotización", "Pendiente aprobación ACM": "En autorización"}
 APROBACION_KAM = ["No requiere", "Pendiente", "Aprobada", "Rechazada"]
 PROPUESTAS = ["", "Mantener", "FG", "Upgrade", "Miami", "Sustituto", "Otra"]
-ROLES = ["admin", "editor", "lector", "acm", "tienda"]
+ROLES = ["admin", "supervisor", "comprador", "atencion"]
+# Roles de versiones anteriores: editor/lector pasan al rol de menor alcance; acm y tienda salen de la app (se desactivan).
+ROLES_RENOMBRADOS = {"editor": "atencion", "lector": "atencion", "acm": "atencion", "tienda": "atencion"}
+ROLES_DESACTIVADOS = ("acm", "tienda")

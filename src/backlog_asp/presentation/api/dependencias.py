@@ -43,9 +43,11 @@ def require(*roles):
     return checker
 
 
-EDITORS = require("admin", "editor")
+EDITORS = require(*acceso.EDITORES)
+APROBADORES = require(*acceso.APROBADORES)
+CORREOS = require(*acceso.CORREOS)
 ADMINS = require("admin")
-INTERNOS = require("admin", "editor", "lector")
+INTERNOS = require(*acceso.ROLES_INTERNOS)
 
 
 def date_or_none(value, field):

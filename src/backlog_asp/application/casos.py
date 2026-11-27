@@ -25,11 +25,11 @@ def detalle(conn, user, key: str) -> dict:
         ("SELECT TOP 50 at, username, detail FROM audit_log WHERE target=? AND action='case_update' ORDER BY id DESC", (key,)),
     ])
     return {
-        "caso": acceso.caso(user, case),
+        "caso": case,
         "historial": [dict(r) for r in historial],
         "comentarios": acceso.comentarios(conn, user, key),
-        "solicitudes": gestion.solicitudes(conn, key=key) if user["role"] in acceso.INTERNOS else [],
-        "gestion": acceso.gestion(user, [dict(r) for r in auditoria]),
+        "solicitudes": gestion.solicitudes(conn, key=key),
+        "gestion": [dict(r) for r in auditoria],
         "kgb_guia": [{k: r[k] for k in ("tracking", "prod_id", "prod_desc", "qty", "edd", "current_event", "sla_ind", "status")}
                      for r in guide_rows if r["prod_norm"] in rel],
         "kgb_guia_total": len(guide_rows),
@@ -43,7 +43,6 @@ def comentar(conn, user, key: str, text: str, visibilidad: str) -> None:
     text = text.strip()
     if not text:
         raise ErrorNegocio("El comentario está vacío.", 422)
-    visibilidad = "compartido" if user["role"] == "acm" else visibilidad
     if visibilidad not in ("interno", "compartido"):
         raise ErrorNegocio("Visibilidad no válida.", 422)
     conn.defer("INSERT INTO comments(key_notif, user_id, username, at, text, visibilidad) VALUES(?,?,?,?,?,?)",
@@ -95,9 +94,9 @@ def llegada_guia(conn, user, tracking: str, fecha: str) -> dict:
     if not keys:
         raise ErrorNegocio("No hay casos abiertos con esa guía.", 404)
     previa = previa[0] if previa else None
-    if previa and previa["arrived_on"] != fecha and user["role"] != "admin":
+    if previa and previa["arrived_on"] != fecha and user["role"] not in acceso.APROBADORES:
         raise ErrorNegocio(f"La llegada de esta guía ya está registrada ({previa['arrived_on']}). "
-                           "Para cambiarla, pídalo a un administrador con el motivo.", 403)
+                           "Para cambiarla, pídalo a un supervisor o administrador con el motivo.", 403)
     conn.upsert("guide_arrivals", {"tracking": tracking, "arrived_on": fecha, "user_id": user["id"], "at": now_iso()},
                 ("tracking",), defer=True)
     updated = 0
@@ -116,7 +115,7 @@ def llegada_guia(conn, user, tracking: str, fecha: str) -> dict:
 # ---------------------------------------------------------------- exportación
 EXPORT_COLS = ["key_notif", "list_name", "ship_to", "assembly", "description", "option_jenny", "eta_jenny", "eta_first",
                "eta_changes", "llegada", "llegada_fuente", "despacho_posible", "limite_fr", "edad", "estado", "responsable",
-               "fecha_recepcion", "fecha_despacho", "fecha_comunicada", "aprobacion_kam", "warranty", "tipo_precio", "precio",
+               "fecha_recepcion", "fecha_despacho", "novedad_despacho", "fecha_comunicada", "aprobacion_kam", "warranty", "tipo_precio", "precio",
                "repair_strategy", "kgb_match", "kgb_edd", "nivel", "source_status", "closed_on", "close_reason"]
 
 

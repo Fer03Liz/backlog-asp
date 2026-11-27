@@ -116,6 +116,8 @@ tr.grupo .cuenta.roja { color: var(--rojo); font-weight: 600; }
 .etiqueta.oh { background: var(--rojo-suave); color: var(--rojo); font-weight: 600; }
 .etiqueta.cerrado { background: none; border: 1px solid var(--linea); color: var(--grafito); }
 .etiqueta.despachado { background: var(--verde-suave); color: var(--verde); }
+.etiqueta.novedad { background: var(--ambar-suave); color: var(--ambar); font-weight: 600; }
+.correos-buscar { margin-bottom: 10px; }
 .fecha { white-space: nowrap; }
 .fecha small { color: var(--grafito); }
 .dias-neg { color: var(--rojo); font-weight: 600; }
@@ -241,14 +243,8 @@ tr.parte-fila .alerta { margin-bottom: 4px; }
 .var-sube { color: var(--verde); font-weight: 600; }
 .var-baja { color: var(--rojo); font-weight: 600; }
 
-/* Roles: Apple Care Manager y tienda */
+/* Roles */
 body.sin-precios .c-precio { display: none; }
-.comentario .vis { margin-left: 8px; font-size: 11px; padding: 0 6px; border-radius: 8px; background: var(--linea-suave); color: var(--grafito); }
-.comentario .vis.compartido { background: var(--cobalto-suave); color: var(--cobalto); }
-.usuario-tienda { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; padding: 8px 0; border-bottom: 1px solid var(--linea-suave); }
-.usuario-tienda .editor-tiendas { flex-basis: 100%; }
-.lista-tiendas { max-height: 260px; overflow: auto; columns: 2; border: 1px solid var(--linea); border-radius: var(--radio); padding: 6px 10px; margin: 8px 0; }
-.lista-tiendas .check { padding-bottom: 3px; break-inside: avoid; }
 
 /* ---------- avisos, selección múltiple y solicitudes */
 .campana { position: relative; }

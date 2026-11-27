@@ -23,6 +23,7 @@ dependencies = [
 backlog-asp = "backlog_asp.__main__:main"
 backlog-admin = "backlog_asp.cli.crear_admin:main"
 backlog-migrar-sqlite = "backlog_asp.cli.migrar_sqlite:main"
+backlog-refrescar = "backlog_asp.cli.refrescar:main"
 
 [tool.poetry]
 packages = [{ include = "backlog_asp", from = "src" }]

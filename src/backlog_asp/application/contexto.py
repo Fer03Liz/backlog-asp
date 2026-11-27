@@ -22,10 +22,6 @@ _CONSULTAS = [
     ("inv", "SELECT part_norm, SUM(cantidad) q FROM inventario GROUP BY part_norm"),
     ("inv_pendientes", """SELECT key_notif, assembly, option_jenny, eta_jenny, created_on, repair_strategy FROM cases
                           WHERE source_status='abierto' AND fecha_despacho IS NULL AND fecha_recepcion IS NULL"""),
-    # Notas de la ACM que nadie del equipo ha marcado leídas
-    ("notas", """SELECT m.key_notif, m.username, m.at, m.text FROM comments m
-                 JOIN users u ON u.id = m.user_id AND u.role = 'acm'
-                 LEFT JOIN notas_leidas l ON l.comment_id = m.id WHERE l.comment_id IS NULL ORDER BY m.id"""),
 ]
 
 
@@ -86,10 +82,6 @@ class Context:
             self.inv_por_parte = {r["part_norm"]: r["q"] for r in f["inv"]}
             self.inv_asignado = inventario.asignar(self, [dict(r) for r in f["inv_pendientes"]])
 
-        self.notas_acm = {}
-        for r in f["notas"]:
-            n = self.notas_acm.setdefault(r["key_notif"], {"n": 0})
-            n.update(n=n["n"] + 1, username=r["username"], at=r["at"], text=r["text"])
 
 
 def load_cases(conn, ctx: Context, include_closed: bool = False, closed_days: int = 45) -> list:

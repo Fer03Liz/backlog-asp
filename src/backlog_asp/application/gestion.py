@@ -1,22 +1,20 @@
 """Gestión del equipo: cambios de un caso, fechas protegidas, solicitudes de cambio, avisos y selección múltiple.
 
-- Fechas de recepción y despacho: un editor las fija una sola vez. Para cambiarlas o borrarlas pide una
-  solicitud con justificación y un administrador la aprueba o la rechaza. El administrador sí puede cambiarlas.
-- Avisos: cada nota de la Apple Care Manager queda "sin leer" hasta que alguien del equipo la marque leída;
-  mientras tanto el caso muestra la alerta NOTA_ACM y la campana cuenta la nota.
+- Fechas de recepción y despacho: quien gestiona casos las fija una sola vez. Para cambiarlas o borrarlas pide una
+  solicitud con justificación y un supervisor o administrador la aprueba o la rechaza. Ellos sí pueden cambiarlas.
+- Avisos: solicitudes pendientes (para quien aprueba) y respuestas recientes a las propias.
 - Selección múltiple: aplicar los mismos cambios a varios casos, con vista previa, en una tanda que queda en la
-  bitácora y que el mismo usuario (o un administrador) puede deshacer el mismo día.
+  bitácora y que el mismo usuario (un supervisor o un administrador) puede deshacer el mismo día.
 """
 import json
 from datetime import timedelta
 
 from ..domain.calendario import today
 from ..domain.errores import GestionError
-from ..domain.gestion import CAMPOS_LOTE, NOMBRE, PROTEGIDAS, calcular, fecha, normalizar, protegidas_bloqueadas
+from ..domain.gestion import CAMPOS_LOTE, CON_DESPACHO, NOMBRE, PROTEGIDAS, calcular, fecha, normalizar, protegidas_bloqueadas
+from .acceso import APROBADORES
 from .auditoria import audit, now_iso
 
-_SIN_LEER = """JOIN users u ON u.id = m.user_id AND u.role = 'acm'
-               LEFT JOIN notas_leidas l ON l.comment_id = m.id WHERE l.comment_id IS NULL"""
 
 
 def guardar(conn, user, key: str, diff: dict, origen: str = None) -> None:
@@ -37,7 +35,7 @@ def cambiar_caso(conn, user, key: str, body: dict) -> int:
     if bloq:
         nombres = " y ".join(NOMBRE[f] for f in bloq)
         raise GestionError(f"La {nombres} ya está registrada. Para cambiarla, use «Solicitar cambio» y justifique; "
-                           "un administrador la aprueba.", 403)
+                           "un supervisor o administrador la aprueba.", 403)
     diff = calcular(old, changes)
     guardar(conn, user, key, diff)
     return len(diff)
@@ -101,45 +99,24 @@ def resolver(conn, admin, sid: int, aprobar: bool, respuesta: str) -> None:
     if aprobar:
         old = dict(conn.execute("SELECT * FROM cases WHERE key_notif=?", (s["key_notif"],)).fetchone())
         diff = {s["campo"]: {"antes": old[s["campo"]], "ahora": s["valor_nuevo"]}} if old[s["campo"]] != s["valor_nuevo"] else {}
-        if s["campo"] == "fecha_despacho" and s["valor_nuevo"] is None and old["estado"] == "Despachado":
-            diff["estado"] = {"antes": "Despachado", "ahora": "Recibido" if old["fecha_recepcion"] else "En gestión"}
+        if s["campo"] == "fecha_despacho" and s["valor_nuevo"] is None and old["estado"] in CON_DESPACHO:
+            diff["estado"] = {"antes": old["estado"], "ahora": "Recibido" if old["fecha_recepcion"] else "En gestión"}
         guardar(conn, admin, s["key_notif"], diff, f"solicitud #{sid} de {s['solicitado_por']}: {s['motivo'][:120]}")
     conn.defer("UPDATE solicitudes_fecha SET estado=?, resuelto_por=?, resuelto_at=?, respuesta=? WHERE id=?",
                ("Aprobada" if aprobar else "Rechazada", admin["username"], now_iso(), respuesta, sid))
     audit(conn, admin, "solicitud_resuelta", s["key_notif"], {"id": sid, "aprobada": aprobar, "respuesta": respuesta})
 
 
-# ---------------------------------------------------------------- avisos (notas de la ACM)
+# ---------------------------------------------------------------- avisos
 def avisos(conn, user) -> dict:
-    consultas = [(f"""SELECT TOP 200 m.id, m.key_notif, m.username, m.at, m.text, c.list_name, c.assembly FROM comments m
-                      LEFT JOIN cases c ON c.key_notif=m.key_notif {_SIN_LEER} ORDER BY m.id DESC""", ()),
-                 _consulta_solicitudes(dias=7)]
-    if user["role"] == "admin":
+    consultas = [_consulta_solicitudes(dias=7)]
+    if user["role"] in APROBADORES:
         consultas.append(_consulta_solicitudes("Pendiente"))
     filas = conn.select_many(consultas)
-    out = {"notas": [dict(r) for r in filas[0]], "solicitudes": [dict(r) for r in filas[2]] if len(filas) > 2 else [],
-           "mis_solicitudes": [dict(s) for s in filas[1] if s["solicitado_por"] == user["username"] and s["estado"] != "Pendiente"]}
-    out["total"] = len(out["notas"]) + len(out["solicitudes"])
+    out = {"solicitudes": [dict(r) for r in filas[1]] if len(filas) > 1 else [],
+           "mis_solicitudes": [dict(s) for s in filas[0] if s["solicitado_por"] == user["username"] and s["estado"] != "Pendiente"]}
+    out["total"] = len(out["solicitudes"])
     return out
-
-
-def marcar_leidas(conn, user, ids: list = None, key: str = None) -> int:
-    sql, args = f"SELECT m.id FROM comments m {_SIN_LEER}", []
-    if ids:
-        sql += f" AND m.id IN ({','.join('?' * len(ids))})"
-        args += [int(i) for i in ids]
-    elif key:
-        sql += " AND m.key_notif=?"
-        args.append(key)
-    pend = [r["id"] for r in conn.execute(sql, args)]
-    now = now_iso()
-    conn.executemany("""INSERT INTO notas_leidas(comment_id, username, at) SELECT ?, ?, ?
-                        WHERE NOT EXISTS (SELECT 1 FROM notas_leidas WHERE comment_id=?)""",
-                     [(i, user["username"], now, i) for i in pend])
-    n = len(pend)
-    if n:
-        audit(conn, user, "notas_leidas", key or ",".join(map(str, ids or [])) or "todas", {"cantidad": n})
-    return n
 
 
 # ---------------------------------------------------------------- selección múltiple
@@ -214,7 +191,7 @@ def lotes_del_dia(conn, user) -> list:
     filas = conn.execute("SELECT * FROM lotes WHERE LEFT(at, 10)=? ORDER BY id DESC", (hoy,))
     out = []
     for r in filas:
-        if user["role"] != "admin" and r["user_id"] != user["id"]:
+        if user["role"] not in APROBADORES and r["user_id"] != user["id"]:
             continue
         out.append({"id": r["id"], "at": r["at"], "username": r["username"], "cambios": json.loads(r["cambios"]),
                     "casos": len(json.loads(r["casos"])), "comentarios": len(json.loads(r["comentarios"] or "[]")),
@@ -228,8 +205,8 @@ def lote_deshacer(conn, user, lid: int) -> dict:
         raise GestionError("Tanda no encontrada.", 404)
     if r["deshecho_at"]:
         raise GestionError("Esa tanda ya se deshizo.", 409)
-    if user["role"] != "admin" and r["user_id"] != user["id"]:
-        raise GestionError("Solo quien aplicó la tanda o un administrador puede deshacerla.", 403)
+    if user["role"] not in APROBADORES and r["user_id"] != user["id"]:
+        raise GestionError("Solo quien aplicó la tanda, un supervisor o un administrador puede deshacerla.", 403)
     if r["at"][:10] != today().isoformat():
         raise GestionError("Solo se puede deshacer el mismo día.", 409)
     hechos = json.loads(r["casos"])
